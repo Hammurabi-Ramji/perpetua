@@ -1,0 +1,11 @@
+# Build output & dependencies — never format these
+node_modules
+build
+dist
+.svelte-kit
+src-tauri/target
+src-tauri/gen
+package-lock.json
+test-results
+playwright-report
+.e2e-data

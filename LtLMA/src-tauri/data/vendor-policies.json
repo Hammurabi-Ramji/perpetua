@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "updated": "2026-07-19",
+  "notes": "Curated starting dataset for Keep-alive Phase 1. Windows are conservative defaults sourced from public marketplace/vendor guidance and community reports; users must verify. confidence: high|medium|low.",
+  "policies": [
+    {
+      "id": "appsumo",
+      "vendor": "AppSumo",
+      "aliases": ["appsumo", "app sumo", "sumo"],
+      "product_hints": [],
+      "keepalive_days": 90,
+      "source": "AppSumo marketplace guidance / deal page keep-alive notes (community-verified)",
+      "last_verified": "2026-07-01",
+      "confidence": "medium"
+    },
+    {
+      "id": "stacksocial",
+      "vendor": "StackSocial",
+      "aliases": ["stacksocial", "stack social"],
+      "product_hints": [],
+      "keepalive_days": 90,
+      "source": "Marketplace deal inactivity patterns (conservative default)",
+      "last_verified": "2026-07-01",
+      "confidence": "low"
+    },
+    {
+      "id": "humble",
+      "vendor": "Humble Bundle",
+      "aliases": ["humble", "humblebundle", "humble bundle"],
+      "product_hints": [],
+      "keepalive_days": 180,
+      "source": "Conservative default for bundle software accounts",
+      "last_verified": "2026-07-01",
+      "confidence": "low"
+    },
+    {
+      "id": "producthunt",
+      "vendor": "Product Hunt",
+      "aliases": ["producthunt", "product hunt", "ph"],
+      "product_hints": [],
+      "keepalive_days": 90,
+      "source": "Deal / lifetime offer common practice (conservative)",
+      "last_verified": "2026-07-01",
+      "confidence": "low"
+    },
+    {
+      "id": "pitchground",
+      "vendor": "PitchGround",
+      "aliases": ["pitchground", "pitch ground"],
+      "product_hints": [],
+      "keepalive_days": 90,
+      "source": "Marketplace deal inactivity patterns (conservative default)",
+      "last_verified": "2026-07-01",
+      "confidence": "low"
+    },
+    {
+      "id": "dealify",
+      "vendor": "Dealify",
+      "aliases": ["dealify"],
+      "product_hints": [],
+      "keepalive_days": 90,
+      "source": "Marketplace deal inactivity patterns (conservative default)",
+      "last_verified": "2026-07-01",
+      "confidence": "low"
+    },
+    {
+      "id": "generic-saas-90",
+      "vendor": "Typical SaaS lifetime deal",
+      "aliases": ["lifetime", "ltd", "saas"],
+      "product_hints": ["lifetime", "ltd"],
+      "keepalive_days": 90,
+      "source": "Industry rule-of-thumb for LTD keep-alive (fallback)",
+      "last_verified": "2026-07-01",
+      "confidence": "low"
+    }
+  ]
+}

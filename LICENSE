@@ -1,0 +1,30 @@
+Copyright (c) 2026 Hammurabi Coding Company / Perpetua contributors.
+All rights reserved.
+
+PERPETUA SOFTWARE LICENSE (PROPRIETARY)
+
+Permission is granted to use the Perpetua desktop application (binary
+distributions and installers) solely under a valid paid or free-tier
+entitlement issued by the licensor.
+
+Except as expressly permitted by applicable law or a separate written
+agreement:
+
+1. You may not copy, modify, distribute, sublicense, reverse engineer,
+   decompile, or create derivative works of the Software, except to the
+   limited extent required for interoperability under mandatory law.
+2. Source code in this repository, if provided, is for authorized
+   development and review only and does not grant a general public
+   license to redistribute or sell the Software.
+3. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND
+   NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+   BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM
+   USE OF THE SOFTWARE.
+
+Third-party open-source components retain their own licenses; see
+dependency manifests (`package.json`, `Cargo.toml`) and vendor notices.
+
+Privacy, Terms of Use, and Support contacts for the launch product are
+published under `LtLMA/legal/`.

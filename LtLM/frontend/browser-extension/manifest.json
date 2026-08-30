@@ -1,0 +1,65 @@
+{
+  "manifest_version": 3,
+  "name": "LicenseVault",
+  "version": "1.0.0",
+  "description": "Automatically sync lifetime licenses from AppSumo, Product Hunt, and more",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "identity",
+    "alarms"
+  ],
+  "host_permissions": [
+    "http://localhost:3001/*",
+    "https://licensevault.app/*",
+    "*://appsumo.com/*",
+    "*://www.producthunt.com/*",
+    "*://www.stacksocial.com/*",
+    "*://www.humblebundle.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://appsumo.com/my-account*", "*://appsumo.com/account*"],
+      "js": ["lib/extractors.js", "content-scripts/appsumo.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://www.producthunt.com/deals*", "*://www.producthunt.com/my-deals*"],
+      "js": ["lib/extractors.js", "content-scripts/producthunt.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://www.stacksocial.com/account/*"],
+      "js": ["lib/extractors.js", "content-scripts/stacksocial.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://www.humblebundle.com/library*", "*://www.humblebundle.com/home/library*"],
+      "js": ["lib/extractors.js", "content-scripts/humblebundle.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content-scripts/license-detector.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "options_page": "options/options.html",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

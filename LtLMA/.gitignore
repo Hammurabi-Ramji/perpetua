@@ -1,0 +1,14 @@
+node_modules
+/build
+/.svelte-kit
+/dist
+src-tauri/target
+
+# Local/dev seed credentials
+scripts/seed.local.json
+**/seed.local.json
+
+# E2E artifacts
+/test-results
+/playwright-report
+/.e2e-data

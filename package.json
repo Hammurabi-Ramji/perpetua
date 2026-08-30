@@ -1,0 +1,14 @@
+{
+  "name": "lifetime-license-manager-application-tests",
+  "private": true,
+  "scripts": {
+    "test": "npm run test:main && npm run test:extensions && npm run test:ltlma",
+    "test:main": "npm --prefix LtLM\\backend test && npm --prefix LtLM\\frontend test && npm run test:e2e",
+    "test:extensions": "npm --prefix LtLM\\frontend\\browser-extension test && npm --prefix LtLM\\frontend\\vscode-extension run test:unit",
+    "test:ltlma": "npm --prefix LtLMA test",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.54.0"
+  }
+}

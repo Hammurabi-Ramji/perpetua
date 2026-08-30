@@ -1,0 +1,30 @@
+# Local secrets & runtime
+.env
+.env.*
+!.env.example
+*.db
+sessions.db
+
+# Dependencies & build outputs
+node_modules/
+LtLMA/node_modules/
+LtLM/**/node_modules/
+LtLMA/src-tauri/target/
+LtLMA/build/
+LtLMA/.svelte-kit/
+dist/
+.vite/
+test-results/
+playwright-report/
+
+# Non-product toolchain (do not ship)
+oracleJdk-26/
+
+# Internal audit/process docs — not for the public repo
+/PROJECT-STATUS-AUDIT.md
+/SSOT.md
+
+# OS noise
+desktop.ini
+Thumbs.db
+.DS_Store

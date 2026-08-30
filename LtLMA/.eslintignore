@@ -1,0 +1,11 @@
+node_modules
+build
+dist
+.svelte-kit
+src-tauri
+*.config.js
+*.config.ts
+.eslintrc.cjs
+test-results
+playwright-report
+.e2e-data
