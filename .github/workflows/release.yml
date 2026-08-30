@@ -2,6 +2,13 @@
 # to a GitHub Release. Each OS builds natively (Tauri apps aren't cross-
 # compilable — Linux needs system WebKitGTK, macOS needs the real SDK) — see
 # LtLMA/docs/RELEASE.md for the local (Windows-only) equivalent.
+#
+# Two jobs, not one matrixed job: three parallel matrix jobs each trying to
+# create/attach to the same GitHub Release race each other (only one
+# platform's assets reliably make it in — verified the hard way). `build`
+# just compiles and stashes each platform's installers as a workflow
+# artifact; the single non-matrixed `publish` job collects all three and
+# uploads them together in one release.
 name: Release
 
 on:
@@ -18,7 +25,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  build:
     strategy:
       fail-fast: false
       matrix:
@@ -70,15 +77,41 @@ jobs:
       # (e.g. tauri-apps/tauri-action#41, #196, #240, #561) even when the
       # build succeeded and the files exist exactly where it looked. Building
       # with the CLI directly — the same command LtLMA/build-release.ps1 uses
-      # locally — sidesteps that: the paths below are verified against real
-      # local builds, and softprops/action-gh-release just uploads whatever
-      # matches the glob rather than doing its own fragile path prediction.
+      # locally — sidesteps that entirely.
       - name: Build
         run: npm run tauri build
         env:
           # Optional: bake in Polar activation for this build. Unset = offline
           # self-issued keys only (same as a local build with no org id set).
           POLAR_ORGANIZATION_ID: ${{ secrets.POLAR_ORGANIZATION_ID }}
+
+      - name: Stash installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.platform }}
+          if-no-files-found: error
+          path: |
+            LtLMA/src-tauri/target/release/bundle/msi/*.msi
+            LtLMA/src-tauri/target/release/bundle/nsis/*.exe
+            LtLMA/src-tauri/target/release/bundle/dmg/*.dmg
+            LtLMA/src-tauri/target/release/bundle/macos/*.app.tar.gz
+            LtLMA/src-tauri/target/release/bundle/deb/*.deb
+            LtLMA/src-tauri/target/release/bundle/rpm/*.rpm
+            LtLMA/src-tauri/target/release/bundle/appimage/*.AppImage
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: installers-*
+          path: dist
+          merge-multiple: true
+
+      - name: List collected assets
+        run: ls -la dist
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v3
@@ -87,12 +120,5 @@ jobs:
           prerelease: false
           tag_name: ${{ github.ref_name }}
           name: "Perpetua ${{ github.ref_name }}"
-          fail_on_unmatched_files: false
-          files: |
-            LtLMA/src-tauri/target/release/bundle/msi/*.msi
-            LtLMA/src-tauri/target/release/bundle/nsis/*.exe
-            LtLMA/src-tauri/target/release/bundle/dmg/*.dmg
-            LtLMA/src-tauri/target/release/bundle/macos/*.app.tar.gz
-            LtLMA/src-tauri/target/release/bundle/deb/*.deb
-            LtLMA/src-tauri/target/release/bundle/rpm/*.rpm
-            LtLMA/src-tauri/target/release/bundle/appimage/*.AppImage
+          fail_on_unmatched_files: true
+          files: dist/*
