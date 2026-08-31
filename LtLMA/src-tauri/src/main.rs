@@ -4,7 +4,7 @@
 )]
 
 use std::sync::Arc;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
 
 use crate::database::{init_db, load_or_create_jwt_secret};
@@ -140,6 +140,9 @@ fn main() {
             // window is closed.
             build_tray(app.handle())?;
 
+            // Native File/View/Help menu bar.
+            build_app_menu(app.handle())?;
+
             // Background maintainer: periodically check for due redemption
             // deadlines and deliver native OS notifications.
             spawn_reminder_scheduler(app.handle().clone());
@@ -154,6 +157,7 @@ fn main() {
                 api.prevent_close();
             }
         })
+        .on_menu_event(|app, event| handle_menu_event(app, event.id().as_ref()))
         .invoke_handler(tauri::generate_handler![])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -187,6 +191,90 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 
     builder.build(app)?;
     Ok(())
+}
+
+/// The standard File/View/Help menu bar most desktop apps have at the top
+/// left. Items that need app/session context (navigation, sign-out, add
+/// license) can't act directly from Rust, so they emit a `perpetua://menu`
+/// event the frontend listens for (see `src/routes/+layout.svelte`).
+/// Help/Exit items are handled here directly since they need no frontend
+/// context at all.
+fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+
+    let add_license = MenuItem::with_id(app, "menu-add-license", "Add License…", true, Some("CmdOrCtrl+N"))?;
+    let export_vault = MenuItem::with_id(app, "menu-export-vault", "Export Vault…", true, None::<&str>)?;
+    let create_backup = MenuItem::with_id(app, "menu-create-backup", "Create Backup", true, None::<&str>)?;
+    let sign_out = MenuItem::with_id(app, "menu-sign-out", "Sign Out", true, None::<&str>)?;
+    let file_menu = Submenu::with_items(
+        app,
+        "File",
+        true,
+        &[
+            &add_license,
+            &export_vault,
+            &create_backup,
+            &PredefinedMenuItem::separator(app)?,
+            &sign_out,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::quit(app, Some("Exit"))?,
+        ],
+    )?;
+
+    let nav_dashboard = MenuItem::with_id(app, "menu-nav-dashboard", "Dashboard", true, Some("CmdOrCtrl+1"))?;
+    let nav_licenses = MenuItem::with_id(app, "menu-nav-licenses", "Licenses", true, Some("CmdOrCtrl+2"))?;
+    let nav_sites = MenuItem::with_id(app, "menu-nav-sites", "Sites", true, Some("CmdOrCtrl+3"))?;
+    let nav_reminders = MenuItem::with_id(app, "menu-nav-reminders", "Reminders", true, Some("CmdOrCtrl+4"))?;
+    let nav_vault = MenuItem::with_id(app, "menu-nav-vault", "Vault Tools", true, Some("CmdOrCtrl+5"))?;
+    let view_menu = Submenu::with_items(
+        app,
+        "View",
+        true,
+        &[&nav_dashboard, &nav_licenses, &nav_sites, &nav_reminders, &nav_vault],
+    )?;
+
+    let user_guide = MenuItem::with_id(app, "menu-help-guide", "User Guide", true, None::<&str>)?;
+    let troubleshooting = MenuItem::with_id(app, "menu-help-troubleshooting", "Troubleshooting", true, None::<&str>)?;
+    let about = MenuItem::with_id(app, "menu-help-about", "About Perpetua", true, None::<&str>)?;
+    let help_menu = Submenu::with_items(app, "Help", true, &[&user_guide, &troubleshooting, &about])?;
+
+    let menu = Menu::with_items(app, &[&file_menu, &view_menu, &help_menu])?;
+    app.set_menu(menu)?;
+    Ok(())
+}
+
+const USER_GUIDE_URL: &str =
+    "https://github.com/Hammurabi-Ramji/perpetua/blob/main/LtLMA/docs/USER_GUIDE.md";
+const TROUBLESHOOTING_URL: &str =
+    "https://github.com/Hammurabi-Ramji/perpetua/blob/main/LtLMA/docs/TROUBLESHOOTING.md";
+
+fn handle_menu_event(app: &tauri::AppHandle, id: &str) {
+    use tauri_plugin_dialog::DialogExt;
+    use tauri_plugin_shell::ShellExt;
+
+    match id {
+        "menu-help-guide" => {
+            let _ = app.shell().open(USER_GUIDE_URL, None);
+        }
+        "menu-help-troubleshooting" => {
+            let _ = app.shell().open(TROUBLESHOOTING_URL, None);
+        }
+        "menu-help-about" => {
+            app.dialog()
+                .message(
+                    "Local-first desktop vault for lifetime software licenses.\n\
+                     Track renewals, get keep-alive reminders before a vendor revokes \
+                     a deal for inactivity, and export or back up your vault anytime.",
+                )
+                .title(format!("Perpetua — v{}", env!("CARGO_PKG_VERSION")))
+                .show(|_| {});
+        }
+        // Everything else needs session/route context Rust doesn't have —
+        // the frontend's own listener decides what to do with it.
+        _ => {
+            let _ = app.emit("perpetua://menu", id);
+        }
+    }
 }
 
 fn spawn_reminder_scheduler(handle: tauri::AppHandle) {
