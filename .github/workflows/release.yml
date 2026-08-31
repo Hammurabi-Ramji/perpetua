@@ -120,4 +120,4 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: "Perpetua ${{ github.ref_name }}"
           fail_on_unmatched_files: true
-          files: dist/*
+          files: dist/**/*
