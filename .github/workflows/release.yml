@@ -17,10 +17,6 @@ on:
       - "v*"
   workflow_dispatch:
 
-defaults:
-  run:
-    working-directory: LtLMA
-
 permissions:
   contents: write
 
@@ -35,6 +31,9 @@ jobs:
           - platform: ubuntu-latest
 
     runs-on: ${{ matrix.platform }}
+    defaults:
+      run:
+        working-directory: LtLMA
     steps:
       - uses: actions/checkout@v4
 
