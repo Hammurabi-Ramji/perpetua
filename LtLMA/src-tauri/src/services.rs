@@ -37,15 +37,25 @@ pub const FREE_LICENSE_LIMIT: usize = 3;
 ///
 /// NOTE (production hardening, next GTM step): an embedded symmetric secret is
 /// forgeable if the binary is reverse-engineered. The planned move is to verify
-/// keys against Lemon Squeezy's license API (Merchant of Record + native key
-/// issuance), which retires this secret entirely. The `verify_pro_key` /
-/// `mint_pro_key` seam below is the only thing that changes.
+/// keys against Polar's license API (Merchant of Record + native key issuance),
+/// which retires this secret entirely. The `verify_pro_key` / `mint_pro_key`
+/// seam below is the only thing that changes.
 ///
-/// Rotate without editing source by setting `PERPETUA_LICENSE_SECRET` at build time.
+/// Set via `PERPETUA_LICENSE_SECRET` at build time. Release builds (`not(debug_assertions)`,
+/// i.e. `cargo build --release` / `tauri build` / build-release.ps1) fail to
+/// compile without it — a real secret must never ship silently unset. Debug
+/// builds fall back to an obviously-fake dev value so `cargo build`/`cargo test`
+/// keep working without extra setup.
+#[cfg(debug_assertions)]
 const LICENSE_VERIFY_SECRET: &str = match option_env!("PERPETUA_LICENSE_SECRET") {
     Some(secret) => secret,
-    None => "mNlP+3nzlcc858Mpwgwdk/gWWrKNwrfxUaWCbCiyI6qtVrZA1kULhPm0b2TOZl+F",
+    None => "PERPETUA_DEV_ONLY_INSECURE_LICENSE_SECRET_DO_NOT_SHIP",
 };
+#[cfg(not(debug_assertions))]
+const LICENSE_VERIFY_SECRET: &str = env!(
+    "PERPETUA_LICENSE_SECRET",
+    "PERPETUA_LICENSE_SECRET must be set for release builds (see build-release.ps1)"
+);
 const PRO_PRODUCT_CLAIM: &str = "perpetua-pro";
 
 /// Typed error so handlers can map the free-tier cap to HTTP 402 (Payment Required)
@@ -268,10 +278,14 @@ pub fn validate_credentials(email: &str, password: &str) -> Result<()> {
     }
     // Local/dev: PERPETUA_DEV_ALLOW_SHORT_PASSWORD=1 (or BSMC_DEV_ALLOW_SHORT_PASSWORD=1)
     // relaxes min length so short shared test passwords can register.
+    // Debug-build only — an env var can't weaken this policy in a shipped release binary.
+    #[cfg(debug_assertions)]
     let allow_short = std::env::var("PERPETUA_DEV_ALLOW_SHORT_PASSWORD")
         .or_else(|_| std::env::var("BSMC_DEV_ALLOW_SHORT_PASSWORD"))
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
+    #[cfg(not(debug_assertions))]
+    let allow_short = false;
     let min_len = if allow_short { 1 } else { 8 };
     if password.len() < min_len {
         return Err(anyhow!("Password must be at least 8 characters."));
@@ -915,6 +929,66 @@ pub fn mark_onboarding_complete(conn: &Connection, user_id: i64) -> Result<()> {
     Ok(())
 }
 
+/// Where the SMTP relay password lives: the OS credential store (Windows
+/// Credential Manager / macOS Keychain / Secret Service) rather than the
+/// SQLite vault, so it isn't sitting in plaintext on disk next to license
+/// keys. Keyed by user id under a Perpetua-specific service name.
+#[cfg(not(test))]
+mod smtp_secret {
+    use anyhow::{anyhow, Result};
+
+    const SERVICE: &str = "com.perpetua.app.smtp";
+
+    fn entry(user_id: i64) -> Result<keyring::Entry> {
+        keyring::Entry::new(SERVICE, &user_id.to_string()).map_err(|err| anyhow!(err.to_string()))
+    }
+
+    pub fn read(user_id: i64) -> Option<String> {
+        entry(user_id).ok()?.get_password().ok()
+    }
+
+    pub fn write(user_id: i64, password: &str) -> Result<()> {
+        let entry = entry(user_id)?;
+        if password.is_empty() {
+            match entry.delete_credential() {
+                Ok(()) => Ok(()),
+                Err(keyring::Error::NoEntry) => Ok(()),
+                Err(err) => Err(anyhow!(err.to_string())),
+            }
+        } else {
+            entry.set_password(password).map_err(|err| anyhow!(err.to_string()))
+        }
+    }
+}
+
+/// Test-only stand-in so the suite never touches the real OS credential store
+/// on the machine running it.
+#[cfg(test)]
+mod smtp_secret {
+    use anyhow::Result;
+    use std::sync::Mutex;
+
+    static STORE: Mutex<Vec<(i64, String)>> = Mutex::new(Vec::new());
+
+    pub fn read(user_id: i64) -> Option<String> {
+        STORE
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(id, _)| *id == user_id)
+            .map(|(_, pw)| pw.clone())
+    }
+
+    pub fn write(user_id: i64, password: &str) -> Result<()> {
+        let mut store = STORE.lock().unwrap();
+        store.retain(|(id, _)| *id != user_id);
+        if !password.is_empty() {
+            store.push((user_id, password.to_string()));
+        }
+        Ok(())
+    }
+}
+
 pub fn get_account_recovery_settings(conn: &Connection, user_id: i64) -> Result<AccountRecoverySettings> {
     let backup_email: Option<String> = conn.query_row(
         "SELECT backup_email FROM users WHERE id = ?",
@@ -922,7 +996,7 @@ pub fn get_account_recovery_settings(conn: &Connection, user_id: i64) -> Result<
         |row| row.get(0),
     )?;
 
-    let mail = conn
+    let mut mail = conn
         .query_row(
             "SELECT smtp_host, smtp_port, smtp_username, smtp_password, smtp_from
              FROM mail_settings WHERE user_id = ?",
@@ -941,6 +1015,23 @@ pub fn get_account_recovery_settings(conn: &Connection, user_id: i64) -> Result<
         .optional()?
         .unwrap_or_default();
 
+    match smtp_secret::read(user_id) {
+        Some(password) => mail.smtp_password = Some(password),
+        None => {
+            // Pre-migration install: the password is still in the DB column from
+            // before this moved to the OS keyring. Move it over now so it stops
+            // sitting at rest in plaintext, then clear the column.
+            if let Some(legacy) = mail.smtp_password.clone().filter(|value| !value.is_empty()) {
+                if smtp_secret::write(user_id, &legacy).is_ok() {
+                    let _ = conn.execute(
+                        "UPDATE mail_settings SET smtp_password = NULL WHERE user_id = ?",
+                        params![user_id],
+                    );
+                }
+            }
+        }
+    }
+
     Ok(AccountRecoverySettings {
         backup_email,
         ..mail
@@ -957,21 +1048,22 @@ pub fn update_account_recovery_settings(
         params![payload.backup_email, user_id],
     )?;
 
+    smtp_secret::write(user_id, payload.smtp_password.as_deref().unwrap_or(""))?;
+
     conn.execute(
         "INSERT INTO mail_settings (user_id, smtp_host, smtp_port, smtp_username, smtp_password, smtp_from)
-         VALUES (?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, NULL, ?)
          ON CONFLICT(user_id) DO UPDATE SET
            smtp_host = excluded.smtp_host,
            smtp_port = excluded.smtp_port,
            smtp_username = excluded.smtp_username,
-           smtp_password = excluded.smtp_password,
+           smtp_password = NULL,
            smtp_from = excluded.smtp_from",
         params![
             user_id,
             payload.smtp_host,
             payload.smtp_port,
             payload.smtp_username,
-            payload.smtp_password,
             payload.smtp_from,
         ],
     )?;
@@ -1083,24 +1175,35 @@ pub fn prepare_invite(conn: &Connection, owner_id: i64, email: &str) -> Result<(
 
     let code = generate_code();
     let code_hash = hash(&code, DEFAULT_COST)?;
+    let expires_at = (Utc::now() + Duration::days(INVITE_EXPIRY_DAYS)).to_rfc3339();
 
     conn.execute(
-        "INSERT INTO vault_members (owner_user_id, member_email, invite_code_hash, invited_at)
-         VALUES (?, ?, ?, ?)",
-        params![owner_id, trimmed, code_hash, now_string()],
+        "INSERT INTO vault_members (owner_user_id, member_email, invite_code_hash, invited_at, expires_at)
+         VALUES (?, ?, ?, ?, ?)",
+        params![owner_id, trimmed, code_hash, now_string(), expires_at],
     )?;
 
     Ok((mail_settings, trimmed.to_string(), code))
 }
 
-pub fn redeem_invite(conn: &Connection, member_user_id: i64, code: &str) -> Result<()> {
+/// Pending invites are redeemable for this many days before they expire.
+const INVITE_EXPIRY_DAYS: i64 = 7;
+
+/// Redeems a pending invite. Scoped to the redeeming account's own email so one
+/// user can't guess and consume an invite meant for someone else, and to
+/// unexpired invites only.
+pub fn redeem_invite(conn: &Connection, member_user_id: i64, member_email: &str, code: &str) -> Result<()> {
     let mut stmt = conn.prepare(
         "SELECT id, invite_code_hash FROM vault_members
          WHERE accepted_at IS NULL
+           AND lower(member_email) = lower(?)
+           AND expires_at IS NOT NULL AND expires_at > ?
          ORDER BY id DESC",
     )?;
     let candidates = stmt
-        .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?
+        .query_map(params![member_email, Utc::now().to_rfc3339()], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?
         .filter_map(|r| r.ok());
 
     let matched_id = candidates

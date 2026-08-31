@@ -14,6 +14,13 @@
 
 $ErrorActionPreference = "Stop"
 
+if (-not $env:PERPETUA_LICENSE_SECRET) {
+    throw "PERPETUA_LICENSE_SECRET is not set. Release builds fail to compile without it " + `
+        "(src-tauri/src/services.rs requires it via env! for non-debug builds) so the " + `
+        "offline license-verification secret is never silently unset in a shipped binary. " + `
+        "Set it to the production secret before building."
+}
+
 $env:POLAR_ORGANIZATION_ID = "2cee7fb6-a84f-442d-b2a2-5eb396253a85"
 
 Write-Host "Building Perpetua with Polar activation enabled (org $env:POLAR_ORGANIZATION_ID)..."

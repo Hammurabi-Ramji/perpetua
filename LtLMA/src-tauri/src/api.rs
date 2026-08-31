@@ -1,6 +1,6 @@
 use axum::{
-    extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode},
+    extract::{Extension, Path, Query, State},
+    http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
@@ -28,10 +28,68 @@ use crate::services::{
     update_license, update_reminder_settings, validate_credentials, verify_jwt, FreeLimitReached,
 };
 use rusqlite::Connection;
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 type DbState = Arc<Mutex<Connection>>;
 
+/// A minimal fixed-window request limiter. There's no reverse proxy in front of
+/// this localhost server to rate-limit at, and the credential/code-guessing
+/// routes below have no other brute-force defense (see services::redeem_invite
+/// and services::prepare_password_reset for the guessable-code surface this
+/// bounds). One instance is shared by every caller of its route group — fine
+/// for a single-user local API where every request effectively comes from the
+/// same machine. Scoped per-router (via Extension, constructed fresh in
+/// `build_router`) rather than a process-global static so concurrent test
+/// suites sharing one process don't trip each other's windows.
+struct RateLimiter {
+    max_requests: usize,
+    window: Duration,
+    hits: std::sync::Mutex<VecDeque<Instant>>,
+}
+
+impl RateLimiter {
+    fn new(max_requests: usize, window: Duration) -> Self {
+        Self {
+            max_requests,
+            window,
+            hits: std::sync::Mutex::new(VecDeque::new()),
+        }
+    }
+
+    fn allow(&self) -> bool {
+        let now = Instant::now();
+        let mut hits = self.hits.lock().unwrap();
+        while matches!(hits.front(), Some(oldest) if now.duration_since(*oldest) > self.window) {
+            hits.pop_front();
+        }
+        if hits.len() >= self.max_requests {
+            false
+        } else {
+            hits.push_back(now);
+            true
+        }
+    }
+}
+
+// Distinct newtypes so both limiters can live in the Extension map at once
+// (Extension is keyed by type, not by value).
+#[derive(Clone)]
+struct AuthRateLimiter(Arc<RateLimiter>);
+#[derive(Clone)]
+struct SharingRateLimiter(Arc<RateLimiter>);
+
+fn rate_limited() -> Response {
+    failure(
+        StatusCode::TOO_MANY_REQUESTS,
+        "Too many requests. Please wait a moment and try again.",
+    )
+}
+
 pub(crate) fn build_router(db: Arc<Mutex<Connection>>, jwt_secret: Arc<String>) -> Router {
+    let auth_limiter = AuthRateLimiter(Arc::new(RateLimiter::new(10, Duration::from_secs(60))));
+    let sharing_limiter = SharingRateLimiter(Arc::new(RateLimiter::new(10, Duration::from_secs(60))));
+
     Router::new()
         .route("/api/health", get(health))
         .route("/api/auth/login", post(login))
@@ -66,8 +124,37 @@ pub(crate) fn build_router(db: Arc<Mutex<Connection>>, jwt_secret: Arc<String>) 
         .route("/api/reminders/settings", get(get_settings).patch(update_settings))
         .route("/api/vendor-policies", get(vendor_policies_meta))
         .route("/api/vendor-policies/suggest", get(vendor_policy_suggest))
-        .layer(CorsLayer::permissive())
+        .layer(Extension(auth_limiter))
+        .layer(Extension(sharing_limiter))
+        .layer(webview_cors_layer())
         .with_state((db, jwt_secret))
+}
+
+/// This server binds to 127.0.0.1 and is reachable from any page open in any
+/// browser on the machine, so CORS is the only thing standing between an
+/// arbitrary website and the local API. Only the app's own webview origin
+/// (plus the Vite dev server in debug builds) may call it cross-origin.
+///
+/// Tauri 2's webview origin (see `tauri::manager::AppManager::tauri_protocol_url`):
+/// on Windows/Android it's `http://tauri.localhost`, or `https://tauri.localhost`
+/// if `app.windows[].useHttpsScheme` / `useHttpsScheme` is set in tauri.conf.json
+/// (not set here); on macOS/Linux it's `tauri://localhost`. Listing all of them
+/// costs nothing since only the one matching the actual runtime origin ever
+/// gets used, and it keeps this from silently breaking if that config changes.
+fn webview_cors_layer() -> CorsLayer {
+    #[allow(unused_mut)]
+    let mut origins = vec![
+        HeaderValue::from_static("tauri://localhost"),
+        HeaderValue::from_static("http://tauri.localhost"),
+        HeaderValue::from_static("https://tauri.localhost"),
+    ];
+    #[cfg(debug_assertions)]
+    origins.push(HeaderValue::from_static("http://localhost:5173"));
+
+    CorsLayer::new()
+        .allow_origin(origins)
+        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
 }
 
 /// Default local API port. Avoid 3000/3001 — Windows Hyper-V often excludes them
@@ -224,8 +311,12 @@ async fn vendor_policy_suggest(Query(query): Query<VendorSuggestQuery>) -> Respo
 
 async fn login(
     State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    Extension(limiter): Extension<AuthRateLimiter>,
     Json(req): Json<LoginRequest>,
 ) -> Response {
+    if !limiter.0.allow() {
+        return rate_limited();
+    }
     let conn = db.lock().await;
 
     match authenticate_user(&conn, &req.email, &req.password) {
@@ -240,8 +331,12 @@ async fn login(
 
 async fn register(
     State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    Extension(limiter): Extension<AuthRateLimiter>,
     Json(req): Json<RegisterRequest>,
 ) -> Response {
+    if !limiter.0.allow() {
+        return rate_limited();
+    }
     if let Err(error) = validate_credentials(&req.email, &req.password) {
         return failure(StatusCode::BAD_REQUEST, &error.to_string());
     }
@@ -291,8 +386,12 @@ async fn complete_onboarding_route(
 
 async fn forgot_password_route(
     State((db, _jwt_secret)): State<(DbState, Arc<String>)>,
+    Extension(limiter): Extension<AuthRateLimiter>,
     Json(req): Json<ForgotPasswordRequest>,
 ) -> Response {
+    if !limiter.0.allow() {
+        return rate_limited();
+    }
     let prepared = {
         let conn = db.lock().await;
         prepare_password_reset(&conn, &req.email)
@@ -316,8 +415,12 @@ async fn forgot_password_route(
 
 async fn reset_password_route(
     State((db, _jwt_secret)): State<(DbState, Arc<String>)>,
+    Extension(limiter): Extension<AuthRateLimiter>,
     Json(req): Json<ResetPasswordRequest>,
 ) -> Response {
+    if !limiter.0.allow() {
+        return rate_limited();
+    }
     let conn = db.lock().await;
     match confirm_password_reset(&conn, &req.email, &req.code, &req.new_password) {
         Ok(_) => success(json!({ "reset": true })),
@@ -360,9 +463,13 @@ async fn update_recovery_route(
 
 async fn invite_member_route(
     State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    Extension(limiter): Extension<SharingRateLimiter>,
     headers: HeaderMap,
     Json(req): Json<InviteMemberRequest>,
 ) -> Response {
+    if !limiter.0.allow() {
+        return rate_limited();
+    }
     let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
         Ok(user) => user,
         Err(error) => return error,
@@ -393,16 +500,20 @@ async fn invite_member_route(
 
 async fn redeem_invite_route(
     State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    Extension(limiter): Extension<SharingRateLimiter>,
     headers: HeaderMap,
     Json(req): Json<RedeemInviteRequest>,
 ) -> Response {
+    if !limiter.0.allow() {
+        return rate_limited();
+    }
     let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
         Ok(user) => user,
         Err(error) => return error,
     };
 
     let conn = db.lock().await;
-    match redeem_invite(&conn, user.id, &req.code) {
+    match redeem_invite(&conn, user.id, &user.email, &req.code) {
         Ok(_) => success(json!({ "redeemed": true })),
         Err(error) => failure(StatusCode::BAD_REQUEST, &error.to_string()),
     }

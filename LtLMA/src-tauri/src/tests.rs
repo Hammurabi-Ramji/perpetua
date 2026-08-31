@@ -818,9 +818,13 @@ fn sharing_requires_pro_and_grants_access_to_owners_vault() {
     assert_eq!(resolve_data_owner_id(&conn, member.id).expect("resolve"), member.id);
 
     // Wrong code doesn't redeem.
-    assert!(redeem_invite(&conn, member.id, "000000").is_err());
+    assert!(redeem_invite(&conn, member.id, &member.email, "000000").is_err());
 
-    redeem_invite(&conn, member.id, &code).expect("redeem");
+    // Right code, wrong (redeeming) account doesn't redeem someone else's invite.
+    let stranger = create_user(&conn, "stranger@example.com", "strangerpass1").expect("stranger");
+    assert!(redeem_invite(&conn, stranger.id, &stranger.email, &code).is_err());
+
+    redeem_invite(&conn, member.id, &member.email, &code).expect("redeem");
 
     // Now the member's requests resolve to the owner's vault.
     assert_eq!(resolve_data_owner_id(&conn, member.id).expect("resolve"), owner.id);

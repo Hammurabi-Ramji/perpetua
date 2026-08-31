@@ -28,7 +28,13 @@ mod tests;
 fn main() {
     // Fulfillment helper: `perpetua mint-key <order-or-email>` prints a Pro license
     // key for a buyer, then exits. Run this after a sale to hand over their unlock.
+    //
+    // Only compiled into debug builds (dev/test convenience) or a release build
+    // built with `--features fulfillment`. The customer-facing release binary
+    // (build-release.ps1) never enables that feature, so a buyer can't mint
+    // their own key from the shipped executable.
     let args: Vec<String> = std::env::args().collect();
+    #[cfg(any(debug_assertions, feature = "fulfillment"))]
     if args.get(1).map(String::as_str) == Some("mint-key") {
         let buyer_ref = args.get(2).map(String::as_str).unwrap_or("unknown");
         match services::mint_pro_key(buyer_ref) {
