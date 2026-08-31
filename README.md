@@ -35,6 +35,7 @@ Details: [`LtLMA/docs/RELEASE.md`](./LtLMA/docs/RELEASE.md) · smoke: [`LtLMA/do
 
 - [`LtLMA/docs/USER_GUIDE.md`](./LtLMA/docs/USER_GUIDE.md) — features, walkthroughs
 - [`LtLMA/docs/TROUBLESHOOTING.md`](./LtLMA/docs/TROUBLESHOOTING.md) — common issues
+- [`LtLMA/docs/STATUS.md`](./LtLMA/docs/STATUS.md) — what works, what doesn't yet, what's next
 
 ## Legal
 
@@ -53,5 +54,5 @@ Details: [`LtLMA/docs/RELEASE.md`](./LtLMA/docs/RELEASE.md) · smoke: [`LtLMA/do
 
 ## Status
 
-See [`PROJECT-STATUS-AUDIT.md`](./PROJECT-STATUS-AUDIT.md) and [`SSOT.md`](./SSOT.md)
-(`UD-20260719-PERPETUA`).
+See [`LtLMA/docs/STATUS.md`](./LtLMA/docs/STATUS.md) for what works, what
+doesn't yet, and what's next as of the current release.
