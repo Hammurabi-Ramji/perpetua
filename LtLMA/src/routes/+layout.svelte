@@ -11,9 +11,49 @@
 
 	let mounted = false;
 
+	// Native "File/View/Help" menu bar (main.rs) — items that need frontend
+	// action emit a `perpetua://menu` event instead of acting directly, since
+	// the Rust side has no session/route context. `__TAURI_INTERNALS__` is
+	// only present inside the real desktop app, never in the plain browser
+	// dev server or Playwright, so this is a no-op there.
+	function handleMenuAction(action: string) {
+		switch (action) {
+			case 'menu-nav-dashboard':
+				void goto('/');
+				break;
+			case 'menu-nav-licenses':
+				void goto('/licenses');
+				break;
+			case 'menu-nav-sites':
+				void goto('/sites');
+				break;
+			case 'menu-nav-reminders':
+				void goto('/reminders');
+				break;
+			case 'menu-nav-vault':
+				void goto('/vault');
+				break;
+			case 'menu-add-license':
+				void goto('/licenses?new=1');
+				break;
+			case 'menu-export-vault':
+			case 'menu-create-backup':
+				void goto('/vault');
+				break;
+			case 'menu-sign-out':
+				void auth.logout();
+				break;
+		}
+	}
+
 	onMount(async () => {
 		await auth.init();
 		mounted = true;
+
+		if (browser && '__TAURI_INTERNALS__' in window) {
+			const { listen } = await import('@tauri-apps/api/event');
+			await listen<string>('perpetua://menu', (event) => handleMenuAction(event.payload));
+		}
 	});
 
 	// Keep the shared entitlement state fresh whenever a user is signed in.

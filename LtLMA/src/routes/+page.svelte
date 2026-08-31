@@ -23,6 +23,26 @@
 	let reminders: ReminderItem[] = [];
 	let draft: LicenseInput = emptyLicense();
 	let showAddLicense = false;
+	let walkthroughStep = 0;
+
+	const WALKTHROUGH_STEPS = [
+		{
+			title: 'Start with the basics',
+			body: 'Product name and license key are the only two required fields. Everything else can wait.'
+		},
+		{
+			title: 'Have a screenshot handy?',
+			body: "Click \"Autofill from screenshot\" below and upload a receipt or confirmation email — it'll pull in the key, dates, and amount automatically. Runs fully offline on this device."
+		},
+		{
+			title: "Set a keep-alive reminder",
+			body: "Many lifetime deals get revoked after months of inactivity. Set \"Keep-alive: log in every (days)\" (or accept our suggestion, if we recognize the site) and Perpetua will remind you before that happens."
+		},
+		{
+			title: "You're set",
+			body: 'Click "Add license" at the bottom whenever you\'re ready — you can always edit any of this later.'
+		}
+	];
 
 	async function loadDashboard() {
 		loading = true;
@@ -46,7 +66,16 @@
 
 	function startOnboarding() {
 		showAddLicense = true;
+		walkthroughStep = 1;
 		void auth.dismissOnboarding();
+	}
+
+	function nextWalkthroughStep() {
+		if (walkthroughStep >= WALKTHROUGH_STEPS.length) {
+			walkthroughStep = 0;
+		} else {
+			walkthroughStep += 1;
+		}
 	}
 
 	async function handleCreate() {
@@ -56,6 +85,7 @@
 			await createLicense(draft);
 			draft = emptyLicense();
 			showAddLicense = false;
+			walkthroughStep = 0;
 			await loadDashboard();
 		} catch (saveError) {
 			// Free-tier cap (402) opens the shared upgrade paywall instead of an error.
@@ -162,10 +192,62 @@
 			</button>
 		</div>
 		{#if showAddLicense}
+			{#if walkthroughStep > 0}
+				<div class="walkthrough">
+					<div class="walkthrough-heading">
+						<span class="walkthrough-step">Step {walkthroughStep} of {WALKTHROUGH_STEPS.length}</span>
+						<button type="button" class="linkish" on:click={() => (walkthroughStep = 0)}>
+							Skip walkthrough
+						</button>
+					</div>
+					<h4>{WALKTHROUGH_STEPS[walkthroughStep - 1].title}</h4>
+					<p class="muted">{WALKTHROUGH_STEPS[walkthroughStep - 1].body}</p>
+					<button type="button" class="secondary" on:click={nextWalkthroughStep}>
+						{walkthroughStep === WALKTHROUGH_STEPS.length ? 'Got it' : 'Next tip'}
+					</button>
+				</div>
+			{/if}
 			<LicenseForm bind:model={draft} submitLabel="Add license" busy={saving} on:submit={handleCreate} />
 		{/if}
 	</article>
 </section>
+
+<style>
+	.walkthrough {
+		margin-bottom: 1.25rem;
+		padding: 0.85rem 1rem;
+		border: 1px solid rgba(56, 189, 248, 0.35);
+		border-radius: 0.9rem;
+		background: rgba(56, 189, 248, 0.08);
+	}
+	.walkthrough-heading {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: 0.35rem;
+	}
+	.walkthrough-step {
+		font-size: 0.78rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		color: #7dd3fc;
+	}
+	.walkthrough h4 {
+		margin: 0 0 0.35rem;
+	}
+	.walkthrough .linkish {
+		display: inline;
+		padding: 0;
+		border: none;
+		background: none;
+		color: inherit;
+		text-decoration: underline;
+		cursor: pointer;
+		font: inherit;
+		font-size: 0.85rem;
+	}
+</style>
 
 <section class="panel">
 	<div class="panel-heading">
