@@ -17,7 +17,14 @@ function mintKey(ref: string): string {
 }
 
 async function addLicense(page: Page, product: string, key: string) {
-  await page.getByPlaceholder("Figma Pro").fill(product);
+  // The form collapses behind this toggle after every successful add, but
+  // stays open after a failed one (e.g. the paywall) — only open it if it's
+  // not already open.
+  const productInput = page.getByPlaceholder("Figma Pro");
+  if (!(await productInput.isVisible())) {
+    await page.getByRole("button", { name: "Add a license" }).click();
+  }
+  await productInput.fill(product);
   await page.getByPlaceholder("AAAA-BBBB-CCCC").fill(key);
   await page.getByRole("button", { name: "Add license" }).click();
 }
@@ -33,6 +40,9 @@ test("free cap blocks the 4th add, then a key unlocks unlimited", async ({
   await page.getByPlaceholder("you@example.com").fill(email);
   await page.getByPlaceholder("Minimum 8 characters").fill("password123");
   await page.locator('form button[type="submit"]').click();
+
+  // First-time onboarding greets new accounts — dismiss it to reach the form.
+  await page.getByRole("button", { name: "Skip" }).click();
 
   // Land on the dashboard, free plan.
   await expect(

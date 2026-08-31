@@ -96,10 +96,17 @@ let workerPromise: ReturnType<typeof createWorker> | null = null;
 
 function getWorker() {
 	if (!workerPromise) {
+		// If init fails (e.g. a transient asset load hiccup), don't cache the
+		// rejection forever — clear it so the next upload gets a fresh attempt
+		// instead of every future OCR call failing identically for the rest of
+		// the session.
 		workerPromise = createWorker('eng', 1, {
 			workerPath: '/tesseract/worker.min.js',
 			corePath: '/tesseract',
 			langPath: '/tessdata'
+		}).catch((error) => {
+			workerPromise = null;
+			throw error;
 		});
 	}
 	return workerPromise;
