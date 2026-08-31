@@ -84,10 +84,21 @@ async function request<T>(path: string, init: RequestInit = {}) {
     headers.set("Authorization", `Bearer ${token}`);
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...init,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      headers,
+    });
+  } catch {
+    // fetch() itself threw — the backend is unreachable (not running, or a
+    // network-level failure), not just an error response. Give a clear,
+    // actionable message instead of leaking a raw "Failed to fetch".
+    throw new ApiError(
+      "Can't reach Perpetua's local service. Try restarting the app.",
+      0,
+    );
+  }
 
   let payload: ApiEnvelope<T> | null = null;
   try {
