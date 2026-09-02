@@ -2,7 +2,7 @@
 
 Local-first lifetime license manager.
 
-**Perpetua** — [`LtLMA/`](./LtLMA/) — Desktop app (Tauri 2 + SvelteKit + Rust/Axum + SQLite), plus a companion browser extension ([`LtLMA/browser-extension/`](./LtLMA/browser-extension/)) that captures license purchases from deal sites straight into your local vault.
+**Perpetua** — [`LtLMA/`](./LtLMA/) — Desktop app (Tauri 2 + SvelteKit + Rust/Axum + SQLite), plus a companion browser extension ([`LtLMA/browser-extension/`](./LtLMA/browser-extension/)) that captures license purchases from deal sites straight into your local vault. Pro unlocks encrypted cloud backup/restore to your own WebDAV storage, so a lost machine doesn't mean a lost vault.
 
 **Version:** 1.0.0 (`LtLMA/`)
 

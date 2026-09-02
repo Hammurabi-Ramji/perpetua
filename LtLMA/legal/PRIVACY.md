@@ -1,6 +1,6 @@
 # Perpetua — Privacy Policy
 
-**Effective date:** 2026-07-19  
+**Effective date:** 2026-09-02  
 **Product:** Perpetua (local-first Lifetime License Manager desktop app)  
 **Support:** see [SUPPORT.md](./SUPPORT.md)
 
@@ -23,20 +23,28 @@ On your device, Perpetua may store:
 
 **At rest:** the SQLite vault is **not encrypted at rest** in the current
 release. Protect device access accordingly; use OS disk encryption where
-available. The one exception is your SMTP relay password (if you configure
-backup-email password reset or vault sharing): that's stored in your
-operating system's credential store (Windows Credential Manager / macOS
-Keychain / Secret Service), not in the SQLite file.
+available. The exceptions are secrets that don't belong in a database file
+even an unencrypted one already accepts as a tradeoff: your SMTP relay
+password, your cloud-backup WebDAV password, and the cloud-backup
+encryption key all live in your operating system's credential store
+(Windows Credential Manager / macOS Keychain / Secret Service) instead.
 
 ## Data that may leave your device
 
 | Action | Data sent | Destination |
 |--------|-----------|-------------|
 | Polar Pro activation (optional) | Activation key / customer-portal token as required by Polar | Polar.sh APIs |
+| Password reset code / vault-sharing invite / cloud-backup recovery key (optional) | A short code or key, by email | Your own SMTP relay, to your backup email address — never a Perpetua-operated server |
+| Cloud backup (optional, Pro) | Your full vault, encrypted with AES-256-GCM **before it leaves your device** | A WebDAV server **you configure** (e.g. your own Koofr account) — never a Perpetua-operated server |
+| Browser extension sync (optional) | Licenses scraped from a deal site's own account page | Your own Perpetua instance, at `127.0.0.1` — this never leaves your device |
 | None of the above | — | — |
 
 Perpetua does **not** send product telemetry, analytics, or vault contents to
-Hammurabi Coding Company, LLC servers during normal use.
+Hammurabi Coding Company, LLC servers during normal use. Cloud backup sends
+encrypted vault data to a third-party storage provider, but only one you
+explicitly configure and control — Perpetua has no server of its own in
+that path, and cannot decrypt what it uploads (the encryption key never
+leaves your device either, beyond the safety-net email above).
 
 ## Free tier and Pro
 
