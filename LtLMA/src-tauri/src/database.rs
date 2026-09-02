@@ -177,6 +177,19 @@ pub fn init_db_at(base_dir: &Path) -> Result<Connection> {
             FOREIGN KEY (owner_user_id) REFERENCES users (id),
             FOREIGN KEY (member_user_id) REFERENCES users (id)
         );
+
+        CREATE TABLE IF NOT EXISTS cloud_backup_settings (
+            user_id INTEGER PRIMARY KEY,
+            enabled INTEGER NOT NULL DEFAULT 0,
+            webdav_url TEXT,
+            webdav_username TEXT,
+            webdav_password TEXT,
+            remote_path TEXT NOT NULL DEFAULT '/perpetua-backups',
+            recovery_key_generated_at TEXT,
+            last_synced_at TEXT,
+            last_sync_error TEXT,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        );
         ",
     )?;
 

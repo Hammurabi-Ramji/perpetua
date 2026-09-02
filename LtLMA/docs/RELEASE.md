@@ -16,19 +16,29 @@ for the launch product (folder: `LtLMA/`).
 Optional: code-signing certificate for store / SmartScreen trust (not required
 for a local/direct-download MVP; unsigned builds may show OS warnings).
 
+**Required:** `PERPETUA_LICENSE_SECRET` set in your shell environment before
+building. Release builds (`not(debug_assertions)`) fail to *compile*
+without it — the offline license-verification secret is never allowed to
+silently fall back to an unset/default value in a shipped binary.
+`build-release.ps1` asserts this up front with a clear error if it's
+missing. This is a real secret (see `SUPPORT.md`/your password manager for
+where it's stored) — never commit it, and treat it as compromised if it
+ever ends up in a chat log, a screenshot, or source control.
+
 ## One-command Polar-enabled release
 
 From `LtLMA/`:
 
 ```powershell
+$env:PERPETUA_LICENSE_SECRET = "<the real secret, from your password manager>"
 npm ci
 .\build-release.ps1
 ```
 
-`build-release.ps1` sets `POLAR_ORGANIZATION_ID` (public org id), clears a
-sandbox `CARGO_TARGET_DIR` redirect (unless `PERPETUA_KEEP_CARGO_TARGET_DIR=1`),
-and runs `npm run tauri build`. Bundle targets are **MSI + NSIS**
-(`tauri.conf.json`).
+`build-release.ps1` checks `PERPETUA_LICENSE_SECRET` is set, sets
+`POLAR_ORGANIZATION_ID` (public org id), clears a sandbox `CARGO_TARGET_DIR`
+redirect (unless `PERPETUA_KEEP_CARGO_TARGET_DIR=1`), and runs
+`npm run tauri build`. Bundle targets are **MSI + NSIS** (`tauri.conf.json`).
 
 ### Output locations (Windows)
 
@@ -54,7 +64,11 @@ Local API listens on **`127.0.0.1:18765`** (avoids Win11 Hyper-V exclusion of
 
 ### Offline / no Polar bake
 
+Still needs `PERPETUA_LICENSE_SECRET` set — that requirement is independent
+of Polar.
+
 ```powershell
+$env:PERPETUA_LICENSE_SECRET = "<the real secret>"
 npm ci
 npm run tauri build
 ```
@@ -71,6 +85,12 @@ still works via offline `perpetua mint-key` HS256 keys.
 5. Set keep-alive days (or accept vendor suggestion) → wait for / trigger
    reminder → **Mark as used**.
 6. Vault → export JSON + create backup.
+7. Set up backup email + SMTP, then enable cloud backup against a real
+   WebDAV target and confirm the recovery-key email arrives — not yet
+   re-verified against a real release build as of this doc's last edit,
+   only against `cargo tauri dev`.
+8. Load `browser-extension/` unpacked, pair it with a token from Vault
+   Tools, and confirm a sync against a real deal-site account page.
 
 ## Checksums (recommended before publish)
 

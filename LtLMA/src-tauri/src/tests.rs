@@ -9,17 +9,16 @@ use tokio::sync::Mutex;
 use tower::util::ServiceExt;
 
 use crate::api::build_router;
-use crate::database::{backup_dir_at, init_db_at};
-use crate::models::LicensePayload;
-use crate::models::AccountRecoverySettings;
+use crate::database::{backup_dir_at, db_path_at, init_db_at};
+use crate::models::{AccountRecoverySettings, EnableCloudBackupRequest, LicensePayload};
 use crate::services::{
     activate_pro, add_license, authenticate_user, collect_due_notifications, confirm_password_reset,
-    create_backup_in_dir, create_jwt, create_user, delete_license, export_licenses_csv,
-    export_licenses_json, get_entitlement, get_license_by_id, get_license_stats, get_licenses,
-    get_reminder_items, import_licenses_csv, import_licenses_json, list_backups_in_dir,
+    create_backup_in_dir, create_jwt, create_user, delete_license, enable_cloud_backup,
+    export_licenses_csv, export_licenses_json, get_entitlement, get_license_by_id, get_license_stats,
+    get_licenses, get_reminder_items, import_licenses_csv, import_licenses_json, list_backups_in_dir,
     mark_license_active, mint_pro_key, prepare_invite, prepare_password_reset, redeem_invite,
-    resolve_data_owner_id, update_account_recovery_settings, update_license, verify_pro_key,
-    FREE_LICENSE_LIMIT,
+    resolve_data_owner_id, restore_vault_from_bytes_at, update_account_recovery_settings, update_license,
+    verify_pro_key, FREE_LICENSE_LIMIT,
 };
 
 fn sample_license(product_name: &str, expiry_date: Option<&str>) -> LicensePayload {
@@ -834,4 +833,120 @@ fn sharing_requires_pro_and_grants_access_to_owners_vault() {
         .expect("fetch via member")
         .expect("member can see the owner's license");
     assert_eq!(via_member.product_name, "Owner's Deal");
+}
+
+fn sample_webdav_request() -> EnableCloudBackupRequest {
+    EnableCloudBackupRequest {
+        webdav_url: "https://app.koofr.net/dav/Koofr".to_string(),
+        webdav_username: "me@example.com".to_string(),
+        webdav_password: "webdav-app-password".to_string(),
+        remote_path: "/perpetua-backups".to_string(),
+    }
+}
+
+#[test]
+fn enable_cloud_backup_requires_pro() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let user = create_user(&conn, "cloud-free@example.com", "password123").expect("user");
+    let mut settings = sample_recovery_settings();
+    settings.backup_email = Some("backup@example.com".to_string());
+    update_account_recovery_settings(&conn, user.id, settings).expect("save recovery settings");
+
+    assert!(enable_cloud_backup(&conn, user.id, sample_webdav_request()).is_err());
+
+    activate_pro(&conn, user.id, &mint_pro_key("test-suite").expect("mint key")).expect("activate");
+    assert!(enable_cloud_backup(&conn, user.id, sample_webdav_request()).is_ok());
+}
+
+#[test]
+fn enable_cloud_backup_requires_backup_email_and_smtp() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let user = create_user(&conn, "cloud-pro@example.com", "password123").expect("user");
+    activate_pro(&conn, user.id, &mint_pro_key("test-suite").expect("mint key")).expect("activate");
+
+    // No backup email / SMTP configured at all.
+    let error = enable_cloud_backup(&conn, user.id, sample_webdav_request())
+        .expect_err("should require backup email first");
+    assert!(error.to_string().contains("backup email"), "unexpected error: {error}");
+
+    // Backup email set, but no SMTP relay.
+    let mut partial = sample_recovery_settings();
+    partial.smtp_host = None;
+    partial.backup_email = Some("backup@example.com".to_string());
+    update_account_recovery_settings(&conn, user.id, partial).expect("save partial settings");
+    let error = enable_cloud_backup(&conn, user.id, sample_webdav_request())
+        .expect_err("should require SMTP relay next");
+    assert!(error.to_string().contains("SMTP"), "unexpected error: {error}");
+
+    // Both configured: succeeds and returns a usable recovery key.
+    let mut full = sample_recovery_settings();
+    full.backup_email = Some("backup@example.com".to_string());
+    update_account_recovery_settings(&conn, user.id, full).expect("save full settings");
+    let (_, to, recovery_key) = enable_cloud_backup(&conn, user.id, sample_webdav_request()).expect("enable");
+    assert_eq!(to, "backup@example.com");
+    assert!(!recovery_key.is_empty());
+}
+
+#[tokio::test]
+async fn restore_vault_from_bytes_swaps_live_connection() {
+    // Build the "original" vault and take a raw backup of it.
+    let source_dir = tempdir().expect("source dir");
+    let source_conn = init_db_at(source_dir.path()).expect("source db");
+    create_user(&source_conn, "original@example.com", "password123").expect("original user");
+    let backup_dir = tempdir().expect("backup dir");
+    let backup_entry = create_backup_in_dir(&source_conn, backup_dir.path()).expect("raw backup");
+    let backup_bytes = std::fs::read(backup_dir.path().join(&backup_entry.file_name)).expect("read backup file");
+
+    // A separate "fresh install" vault, wrapped the same way AppState wraps it.
+    let target_dir = tempdir().expect("target dir");
+    let target_conn = init_db_at(target_dir.path()).expect("target db");
+    create_user(&target_conn, "fresh-install-only@example.com", "password123").expect("fresh-install user");
+    let db = Arc::new(Mutex::new(target_conn));
+    let target_path = db_path_at(target_dir.path()).expect("target db path");
+
+    restore_vault_from_bytes_at(&db, &backup_bytes, &target_path)
+        .await
+        .expect("restore");
+
+    // Every subsequent locksees the restored data, not the pre-restore vault.
+    let guard = db.lock().await;
+    assert!(
+        authenticate_user(&guard, "original@example.com", "password123")
+            .expect("auth check")
+            .is_some(),
+        "restored vault should contain the original account"
+    );
+    assert!(
+        authenticate_user(&guard, "fresh-install-only@example.com", "password123")
+            .expect("auth check")
+            .is_none(),
+        "pre-restore account should no longer exist after restore"
+    );
+}
+
+#[tokio::test]
+async fn restore_route_is_reachable_without_auth_header() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let router = build_router(Arc::new(Mutex::new(conn)), Arc::new("test-secret".to_string()));
+
+    // No Authorization header at all — a fresh install has no session to send
+    // one with. This must fail on bad WebDAV/decrypt, not on missing auth;
+    // a 401 here would mean someone accidentally gated restore behind login,
+    // which would make it impossible to ever use.
+    let response = router
+        .oneshot(http(
+            "POST",
+            "/api/cloud-backup/restore",
+            None,
+            // Port 1 on loopback: fails fast with connection-refused instead
+            // of risking a slow DNS timeout in a sandboxed test environment.
+            Some(r#"{"webdav_url":"http://127.0.0.1:1","webdav_username":"u","webdav_password":"p","remote_path":"/x","recovery_key":"not-a-real-key"}"#),
+        ))
+        .await
+        .expect("response");
+
+    assert_ne!(response.status(), StatusCode::UNAUTHORIZED);
 }

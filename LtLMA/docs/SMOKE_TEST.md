@@ -16,6 +16,12 @@ Manual critical-path checklist. Sign off only what you actually ran.
 - [ ] Set keep-alive days (or accept vendor suggestion) → trigger / wait for reminder path
 - [ ] **Mark as used** resets keep-alive clock
 - [ ] Vault → export JSON + create backup
+- [ ] Vault → Cloud backup: enable against a real WebDAV account, confirm
+      the recovery-key email arrives, run "Back up to cloud now"
+- [ ] Sign-in screen → Restore from cloud backup, against a fresh data dir
+      (`perpetua serve <alt-dir>`), recovers the vault with no prior login
+- [ ] Vault → reveal a browser-extension token; pair `browser-extension/`
+      loaded unpacked and confirm a sync from a real deal-site account page
 - [ ] Close window → app stays in tray; Quit from tray exits
 
 ## CLI / headless
@@ -35,6 +41,7 @@ Manual critical-path checklist. Sign off only what you actually ran.
 
 - [ ] `cd src-tauri && cargo test`
 - [ ] `npm test` (Vitest)
+- [ ] `cd browser-extension && npm test`
 - [ ] `npm run check` + `npm run build`
 
 ## Sign-off

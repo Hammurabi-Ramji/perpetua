@@ -4,21 +4,17 @@ This document catalogs the full quality picture for **Perpetua** — the local-f
 desktop app (Tauri + SvelteKit + Rust + SQLite), the edition being taken to
 market. (The source folder is still named `LtLMA`, the original codename.)
 
-> Scope note: the repo also contains **LtLM** (the web edition: Node/Express +
-> React + browser/VSCode extensions). LtLM has its own separate test setup
-> (including the Playwright suite — see [Playwright](#8-playwright-e2e)). LtLM is
-> **not** covered by the gates below and is out of scope for the Perpetua launch.
-
 ---
 
 ## 1. Quality gates (commands)
 
 Run from the project root:
 
-| Gate                          | Command                      | Status (re-run 2026-07-19)     |
+| Gate                          | Command                      | Status (re-run 2026-09-02)     |
 | ----------------------------- | ---------------------------- | ------------------------------ |
-| Rust unit + integration tests | `cd src-tauri && cargo test` | ✅ 21/21 (incl. vendor policy) |
+| Rust unit + integration tests | `cd src-tauri && cargo test` | ✅ 31/31                       |
 | Frontend unit tests (Vitest)  | `npm run test`               | ✅ 11/11                       |
+| Browser extension unit tests  | `npm test` (in `browser-extension/`) | ✅ 14/14 — own CI job   |
 | Browser E2E (Playwright)      | `npm run test:e2e`           | ⏸ not re-run this pass         |
 | TypeScript / Svelte typecheck | `npm run check`              | ✅ 0 errors / 0 warnings       |
 | Lint (Prettier + ESLint)      | `npm run lint`               | ⏸ not re-run this pass         |
@@ -29,9 +25,22 @@ Run from the project root:
 
 ---
 
-## 2. Rust tests (`src-tauri/src/tests.rs`)
+## 2. Rust tests (`src-tauri/src/tests.rs`, plus module-local tests)
 
-Sixteen tests covering services (direct) and the HTTP API (via `tower::oneshot`).
+31 tests total: the service/HTTP-level suite below in `tests.rs`, plus
+module-local unit tests for `cloud_backup.rs` (AES-256-GCM encrypt/decrypt
+round-trip, wrong-key rejection, tampered-ciphertext rejection) and
+`vendor_policy.rs`. Covers services (direct) and the HTTP API (via
+`tower::oneshot`).
+
+**Since the last full pass, added:** cloud-backup Pro-gating and
+prerequisite checks (`enable_cloud_backup_requires_pro`,
+`enable_cloud_backup_requires_backup_email_and_smtp`), the live
+`Arc<Mutex<Connection>>` swap used by restore
+(`restore_vault_from_bytes_swaps_live_connection`), and a regression guard
+asserting the restore route is reachable with **no** `Authorization`
+header — it has to be, since a fresh install has no session to send one
+with (`restore_route_is_reachable_without_auth_header`).
 
 ### Service-level
 
@@ -98,6 +107,35 @@ doesn't pick up the Playwright specs in `e2e/`.
 
 ---
 
+## 3a. Browser extension tests (`browser-extension/tests/`, own project)
+
+A separate npm project (`browser-extension/package.json`, own `vitest.config.js`)
+— run with `cd browser-extension && npm test`, and as its own job in
+`perpetua-ci.yml`. 14 tests:
+
+- `extractors.test.js` (2) — the shared DOM-parsing helpers used by every
+  content script; unchanged by the Perpetua port, pure logic, no mocks.
+- `options.test.js` (4) — settings load/save against `chrome.storage.local`
+  (not `.sync` — deliberate, the token is a real credential), the paste-a-
+  token field, clearing the token, and the `/api/health` connection test.
+- `popup.test.js` (3) — authenticated vs. not-authenticated state, the live
+  license list, opening settings.
+- `background.test.js` (5) — the actual sync pipeline: a `licensesScraped`
+  message produces a correctly-shaped `POST /api/vault/import` body;
+  entries missing `license_key`/`product_name` are filtered client-side
+  before the request goes out; a mocked `402` resolves to "0 synced," never
+  a false partial success (Perpetua's import is all-or-nothing per
+  transaction — see `invalid_import_is_all_or_nothing` above); a mocked
+  `401` surfaces a re-paste-token message instead of an unhandled
+  rejection; `getLicenses` calls through correctly.
+
+**Not covered by any automated test** (see `browser-extension/README.md`):
+real DOM selectors against live deal-site markup, and real Chrome
+`host_permissions`/service-worker fetch behavior — both need a real
+browser and real accounts, done manually.
+
+---
+
 ## 4. Error handling
 
 ### Backend (Rust / Axum)
@@ -142,8 +180,11 @@ an explicit HTTP status:
 - **Entitlement load failure** → the shared store falls back to `null`; the plan
   banner simply doesn't render (no broken UI).
 - **License secret override** → `LICENSE_VERIFY_SECRET` reads
-  `option_env!("PERPETUA_LICENSE_SECRET")` with an embedded default, so it can be
-  rotated at build time without code changes.
+  `PERPETUA_LICENSE_SECRET` at build time. Debug builds fall back to an
+  obviously-fake dev value if it's unset (so `cargo test`/`cargo build`
+  need no setup); release builds (`env!`, not `option_env!`) **fail to
+  compile** without it — no silent embedded default ships in a release
+  binary anymore. See `docs/RELEASE.md`.
 - **Local data dir override** → `PERPETUA_DATA_DIR` / `perpetua serve <dir>` lets the
   app run against a throwaway vault.
 - **Backups** are rotated (keep 5) and never touch non-db files.
@@ -202,19 +243,23 @@ Prereq: build the Rust binary first (`cd src-tauri && cargo build`); the config
 references `src-tauri/target/debug/perpetua`. The backend runs offline (no Polar org
 id), so the test mints its own key via `perpetua mint-key`.
 
-Separately, an **unrelated** Playwright suite at `PERPETUA/tests/e2e/main-app.spec.js`
-targets the **LtLM web edition** (it drives `/greta`, `/twidget`, `/pickaxe`,
-`/eduba` — features that exist only in LtLM) with a fully mocked API. It is not
-part of Perpetua's gates.
-
 ---
 
 ## 9. Known gaps
 
 - **Code signing** — the Tauri installer is unsigned; an **EV** certificate is
   required to avoid Windows SmartScreen warnings at install.
-- **LtLM web edition** is not covered by the Perpetua gates and hasn't been verified
-  in this effort.
+- **Vault-at-rest encryption** — SMTP/WebDAV passwords and the cloud-backup
+  key are in the OS keyring now; the SQLite vault itself (license keys)
+  is still plaintext.
+- **No session/token revocation** — JWTs (including the browser extension's
+  pairing token) are stateless with no revocation list.
+- **Cloud backup and the browser extension have real live-service
+  dependencies that can't be exercised in CI**: a real WebDAV account for
+  the former, real deal-site DOM for the latter. Both are unit-tested up
+  to that boundary (§2, §3a) and need periodic manual re-verification.
+- **No automated dependency vulnerability scanning** — no Dependabot,
+  `cargo audit`, `npm audit`, or CodeQL in any workflow.
 
 ---
 

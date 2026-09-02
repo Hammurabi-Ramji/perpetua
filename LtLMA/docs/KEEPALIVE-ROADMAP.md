@@ -98,7 +98,7 @@ explicitly opt-in, paid Auto-Maintain tier takes over.
   - Retries with backoff and structured logging for the scheduler and adapters.
   - Opt-in failure telemetry to spot broken vendor adapters early.
   - Multi-device awareness so marking a license active on one machine is
-    reflected on another (ties into the LtLM web edition).
+    reflected on another (ties into cloud backup/restore).
 - Exit criteria: failures are observable and recoverable; activity state is
   consistent across a user's devices.
 

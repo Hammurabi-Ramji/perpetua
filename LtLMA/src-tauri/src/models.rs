@@ -246,6 +246,46 @@ pub struct VaultMember {
     pub accepted_at: Option<String>,
 }
 
+/// WebDAV cloud-backup configuration (Pro). `webdav_password` is never
+/// populated here — the real value lives in the OS keyring, never in SQLite.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct CloudBackupSettings {
+    pub enabled: bool,
+    pub webdav_url: Option<String>,
+    pub webdav_username: Option<String>,
+    pub remote_path: Option<String>,
+    pub recovery_key_generated_at: Option<String>,
+    pub last_synced_at: Option<String>,
+    pub last_sync_error: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct EnableCloudBackupRequest {
+    pub webdav_url: String,
+    pub webdav_username: String,
+    pub webdav_password: String,
+    pub remote_path: String,
+}
+
+/// Returned once, immediately after enabling cloud backup. The frontend must
+/// show `recovery_key` to the user now — it is never retrievable again after
+/// this response.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct EnableCloudBackupResult {
+    pub recovery_key: String,
+    pub emailed: bool,
+    pub email_error: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct RestoreCloudBackupRequest {
+    pub webdav_url: String,
+    pub webdav_username: String,
+    pub webdav_password: String,
+    pub remote_path: String,
+    pub recovery_key: String,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ApiResponse<T> {
     pub success: bool,

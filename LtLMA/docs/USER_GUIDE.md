@@ -3,7 +3,8 @@
 Perpetua is a local-first desktop vault for lifetime software licenses. Everything
 you add — keys, dates, sites, notes — lives in a SQLite database on your own
 machine (`%APPDATA%/perpetua/licenses.db`). Nothing is uploaded anywhere unless
-you explicitly configure it to (see [Backup email](#backup-email--password-reset)).
+you explicitly configure it to (see [Backup email](#backup-email--password-reset)
+and [Cloud backup](#cloud-backup--restore-pro)).
 
 ## Getting started
 
@@ -99,6 +100,46 @@ on their account sees and manages the same license storage as yours.
 Under **Vault tools**: export your licenses as JSON or CSV, or create a local
 backup snapshot of the whole database. Backups rotate automatically (the 5
 most recent are kept).
+
+## Cloud backup & restore (Pro)
+
+Local backups protect you from a bad edit; cloud backup protects you from
+losing the machine entirely. Under **Vault tools → Cloud backup (WebDAV)**,
+enter your WebDAV server URL, username, and password — Koofr is a good
+default, but any WebDAV-speaking storage works. You'll need a **backup
+email and SMTP relay already configured** (see above) first, since that's
+where the safety net below gets sent.
+
+Click **Enable cloud backup**. Perpetua encrypts your vault with a
+randomly-generated key before anything leaves your device, and shows you
+that **recovery key exactly once** — copy it somewhere safe (a password
+manager, ideally). A copy is also emailed to your backup address as a
+safety net, but the on-screen copy is the one to actually keep. **Without
+this key, not even Perpetua can decrypt your cloud backup.**
+
+Use **Back up to cloud now** any time you want a fresh snapshot uploaded.
+Perpetua doesn't keep a history in the cloud — each sync replaces the
+previous one — so this is a disaster-recovery copy, not a version history.
+
+**Restoring on a new machine:** on the sign-in screen of a fresh Perpetua
+install, click **Restore from cloud backup**, enter the same WebDAV
+credentials and your recovery key, and your entire vault — accounts,
+licenses, everything — comes back. No prior login needed; that's the
+whole point.
+
+## Browser extension
+
+A companion browser extension can auto-capture lifetime-deal purchases
+from AppSumo, Product Hunt, StackSocial, and Humble Bundle straight into
+your vault as you browse. It's not bundled in the installer — load it
+unpacked from `browser-extension/` in the app's source tree (see that
+folder's own README for setup).
+
+To pair it: open **Vault tools → Browser extension → Reveal token for
+extension**, copy the token shown, and paste it into the extension's
+Options page. Treat it like a password — it's a real 30-day Perpetua
+session credential. If syncing stops working after a while, sign back
+into Perpetua and copy a fresh one.
 
 ## Upgrading to Pro
 

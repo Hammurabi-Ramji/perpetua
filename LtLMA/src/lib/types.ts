@@ -129,6 +129,37 @@ export interface BackupEntry {
   size_bytes: number;
 }
 
+export interface CloudBackupSettings {
+  enabled: boolean;
+  webdav_url: string | null;
+  webdav_username: string | null;
+  remote_path: string | null;
+  recovery_key_generated_at: string | null;
+  last_synced_at: string | null;
+  last_sync_error: string | null;
+}
+
+export interface EnableCloudBackupInput {
+  webdav_url: string;
+  webdav_username: string;
+  webdav_password: string;
+  remote_path: string;
+}
+
+export interface EnableCloudBackupResult {
+  recovery_key: string;
+  emailed: boolean;
+  email_error: string | null;
+}
+
+export interface RestoreCloudBackupInput {
+  webdav_url: string;
+  webdav_username: string;
+  webdav_password: string;
+  remote_path: string;
+  recovery_key: string;
+}
+
 export const emptyLicense = (): LicenseInput => ({
   product_name: "",
   license_key: "",

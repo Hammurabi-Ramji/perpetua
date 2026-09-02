@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Perpetua</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header">Perpetua</div>
+
+  <div class="content">
+    <div id="auth-status" class="status">Checking authentication...</div>
+
+    <div id="authenticated-content" class="hidden">
+      <button id="sync-button" class="button sync-button">🔄 Sync All Licenses</button>
+
+      <div id="recent-licenses">
+        <h4>Recent Licenses</h4>
+        <div id="licenses-list"></div>
+      </div>
+
+      <div class="margin-top">
+        <button id="settings" class="button">⚙️ Settings</button>
+      </div>
+    </div>
+
+    <div id="login-prompt" class="hidden">
+      <p>Paste a token from Perpetua &gt; Vault Tools to start syncing.</p>
+      <button id="login-button" class="button">Open Settings</button>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

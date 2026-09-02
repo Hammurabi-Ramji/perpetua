@@ -2,7 +2,7 @@
 
 **Effective date:** 2026-07-19  
 **Product:** Perpetua desktop application  
-**Licensor:** Hammurabi Coding Company (“we”, “us”)
+**Licensor:** Hammurabi Coding Company, LLC (“we”, “us”)
 
 ## 1. Acceptance
 

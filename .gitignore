@@ -8,7 +8,7 @@ sessions.db
 # Dependencies & build outputs
 node_modules/
 LtLMA/node_modules/
-LtLM/**/node_modules/
+LtLMA/browser-extension/node_modules/
 LtLMA/src-tauri/target/
 LtLMA/build/
 LtLMA/.svelte-kit/

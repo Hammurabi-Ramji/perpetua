@@ -9,12 +9,15 @@ use std::cmp::Reverse;
 use std::fs;
 
 use crate::models::{
-    AccountRecoverySettings, AuthResponse, BackupEntry, Entitlement, ImportLicensesResult, License,
-    LicenseExportSnapshot, LicensePayload, LicenseStats, LicenseUpdate, ReminderItem, ReminderNotice,
-    ReminderSettings, ReminderSettingsUpdate, SiteConnection, User, VaultExportFile, VaultMember,
+    AccountRecoverySettings, AuthResponse, BackupEntry, CloudBackupSettings, Entitlement,
+    EnableCloudBackupRequest, ImportLicensesResult, License, LicenseExportSnapshot, LicensePayload,
+    LicenseStats, LicenseUpdate, ReminderItem, ReminderNotice, ReminderSettings, ReminderSettingsUpdate,
+    SiteConnection, User, VaultExportFile, VaultMember,
 };
-use crate::database::backup_dir;
+use crate::database::{backup_dir, db_path};
 use rand::Rng;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct Claims {
@@ -929,66 +932,6 @@ pub fn mark_onboarding_complete(conn: &Connection, user_id: i64) -> Result<()> {
     Ok(())
 }
 
-/// Where the SMTP relay password lives: the OS credential store (Windows
-/// Credential Manager / macOS Keychain / Secret Service) rather than the
-/// SQLite vault, so it isn't sitting in plaintext on disk next to license
-/// keys. Keyed by user id under a Perpetua-specific service name.
-#[cfg(not(test))]
-mod smtp_secret {
-    use anyhow::{anyhow, Result};
-
-    const SERVICE: &str = "com.perpetua.app.smtp";
-
-    fn entry(user_id: i64) -> Result<keyring::Entry> {
-        keyring::Entry::new(SERVICE, &user_id.to_string()).map_err(|err| anyhow!(err.to_string()))
-    }
-
-    pub fn read(user_id: i64) -> Option<String> {
-        entry(user_id).ok()?.get_password().ok()
-    }
-
-    pub fn write(user_id: i64, password: &str) -> Result<()> {
-        let entry = entry(user_id)?;
-        if password.is_empty() {
-            match entry.delete_credential() {
-                Ok(()) => Ok(()),
-                Err(keyring::Error::NoEntry) => Ok(()),
-                Err(err) => Err(anyhow!(err.to_string())),
-            }
-        } else {
-            entry.set_password(password).map_err(|err| anyhow!(err.to_string()))
-        }
-    }
-}
-
-/// Test-only stand-in so the suite never touches the real OS credential store
-/// on the machine running it.
-#[cfg(test)]
-mod smtp_secret {
-    use anyhow::Result;
-    use std::sync::Mutex;
-
-    static STORE: Mutex<Vec<(i64, String)>> = Mutex::new(Vec::new());
-
-    pub fn read(user_id: i64) -> Option<String> {
-        STORE
-            .lock()
-            .unwrap()
-            .iter()
-            .find(|(id, _)| *id == user_id)
-            .map(|(_, pw)| pw.clone())
-    }
-
-    pub fn write(user_id: i64, password: &str) -> Result<()> {
-        let mut store = STORE.lock().unwrap();
-        store.retain(|(id, _)| *id != user_id);
-        if !password.is_empty() {
-            store.push((user_id, password.to_string()));
-        }
-        Ok(())
-    }
-}
-
 pub fn get_account_recovery_settings(conn: &Connection, user_id: i64) -> Result<AccountRecoverySettings> {
     let backup_email: Option<String> = conn.query_row(
         "SELECT backup_email FROM users WHERE id = ?",
@@ -1023,7 +966,7 @@ pub fn get_account_recovery_settings(conn: &Connection, user_id: i64) -> Result<
     // plaintext at rest forever the moment the keyring copy exists.
     let legacy_plaintext = mail.smtp_password.clone().filter(|value| !value.is_empty());
 
-    match smtp_secret::read(user_id) {
+    match crate::secret_store::read(crate::secret_store::SMTP, user_id) {
         Some(password) => {
             mail.smtp_password = Some(password);
             if legacy_plaintext.is_some() {
@@ -1035,7 +978,7 @@ pub fn get_account_recovery_settings(conn: &Connection, user_id: i64) -> Result<
         }
         None => {
             if let Some(legacy) = legacy_plaintext {
-                if smtp_secret::write(user_id, &legacy).is_ok() {
+                if crate::secret_store::write(crate::secret_store::SMTP, user_id, &legacy).is_ok() {
                     let _ = conn.execute(
                         "UPDATE mail_settings SET smtp_password = NULL WHERE user_id = ?",
                         params![user_id],
@@ -1061,7 +1004,7 @@ pub fn update_account_recovery_settings(
         params![payload.backup_email, user_id],
     )?;
 
-    smtp_secret::write(user_id, payload.smtp_password.as_deref().unwrap_or(""))?;
+    crate::secret_store::write(crate::secret_store::SMTP, user_id, payload.smtp_password.as_deref().unwrap_or(""))?;
 
     conn.execute(
         "INSERT INTO mail_settings (user_id, smtp_host, smtp_port, smtp_username, smtp_password, smtp_from)
@@ -1584,6 +1527,191 @@ fn rotate_backups(directory: &std::path::Path) -> Result<()> {
     for (_, path) in backups.into_iter().skip(MAX_BACKUPS) {
         fs::remove_file(path)?;
     }
+
+    Ok(())
+}
+
+/// Everything the async cloud-sync step (route handler) needs, gathered while
+/// the DB lock is briefly held. Owned values only — this crosses an `.await`
+/// boundary in the caller, so it must not borrow from `conn`.
+pub struct CloudSyncContext {
+    pub webdav_url: String,
+    pub webdav_username: String,
+    pub webdav_password: String,
+    pub remote_path: String,
+    pub recovery_key: String,
+    pub backup_path: std::path::PathBuf,
+}
+
+pub fn get_cloud_backup_settings(conn: &Connection, user_id: i64) -> Result<CloudBackupSettings> {
+    Ok(conn
+        .query_row(
+            "SELECT enabled, webdav_url, webdav_username, remote_path, recovery_key_generated_at, last_synced_at, last_sync_error
+             FROM cloud_backup_settings WHERE user_id = ?",
+            params![user_id],
+            |row| {
+                Ok(CloudBackupSettings {
+                    enabled: bool_from_sql(row.get(0)?),
+                    webdav_url: row.get(1)?,
+                    webdav_username: row.get(2)?,
+                    remote_path: row.get(3)?,
+                    recovery_key_generated_at: row.get(4)?,
+                    last_synced_at: row.get(5)?,
+                    last_sync_error: row.get(6)?,
+                })
+            },
+        )
+        .optional()?
+        .unwrap_or_default())
+}
+
+/// Enables (or re-enables) cloud backup. Always generates and stores a fresh
+/// AES-256 recovery key — re-running this after changing WebDAV creds is the
+/// intended way to update them, at the cost of also rotating the key (a
+/// previously uploaded cloud backup encrypted under the old key needs a fresh
+/// sync to be recoverable under the new one).
+pub fn enable_cloud_backup(
+    conn: &Connection,
+    user_id: i64,
+    settings: EnableCloudBackupRequest,
+) -> Result<(AccountRecoverySettings, String, String)> {
+    if !is_pro(conn)? {
+        return Err(anyhow!("Cloud backup is a Pro feature."));
+    }
+
+    let mail_settings = get_account_recovery_settings(conn, user_id)?;
+    let backup_email = mail_settings
+        .backup_email
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            anyhow!(
+                "Set a backup email under Backup email & account recovery before enabling cloud \
+                 backup — it's where your recovery key safety-net copy goes."
+            )
+        })?;
+    if mail_settings.smtp_host.is_none() {
+        return Err(anyhow!("Set up your SMTP relay before enabling cloud backup."));
+    }
+
+    let webdav_url = settings.webdav_url.trim().to_string();
+    let webdav_username = settings.webdav_username.trim().to_string();
+    let remote_path = settings.remote_path.trim().to_string();
+    if webdav_url.is_empty() || settings.webdav_password.is_empty() {
+        return Err(anyhow!("WebDAV server URL and password are required."));
+    }
+
+    let recovery_key = crate::cloud_backup::generate_recovery_key();
+    crate::secret_store::write(crate::secret_store::BACKUP_KEY, user_id, &recovery_key)?;
+    crate::secret_store::write(crate::secret_store::WEBDAV_PASSWORD, user_id, &settings.webdav_password)?;
+
+    conn.execute(
+        "INSERT INTO cloud_backup_settings (user_id, enabled, webdav_url, webdav_username, webdav_password, remote_path, recovery_key_generated_at)
+         VALUES (?, 1, ?, ?, NULL, ?, ?)
+         ON CONFLICT(user_id) DO UPDATE SET
+           enabled = 1, webdav_url = excluded.webdav_url, webdav_username = excluded.webdav_username,
+           webdav_password = NULL, remote_path = excluded.remote_path,
+           recovery_key_generated_at = excluded.recovery_key_generated_at",
+        params![user_id, webdav_url, webdav_username, remote_path, now_string()],
+    )?;
+
+    Ok((mail_settings, backup_email, recovery_key))
+}
+
+/// Prepares everything a manual "back up to cloud now" needs, and produces a
+/// fresh local backup — all synchronous, done while the DB lock is held. The
+/// caller (the API route handler) must drop the lock before doing the actual
+/// network upload; see `record_cloud_sync_result` for recording the outcome
+/// afterward under a fresh, brief lock.
+pub fn prepare_cloud_sync(conn: &Connection, user_id: i64) -> Result<CloudSyncContext> {
+    if !is_pro(conn)? {
+        return Err(anyhow!("Cloud backup is a Pro feature."));
+    }
+
+    let (enabled, webdav_url, webdav_username, remote_path) = conn
+        .query_row(
+            "SELECT enabled, webdav_url, webdav_username, remote_path FROM cloud_backup_settings WHERE user_id = ?",
+            params![user_id],
+            |row| {
+                Ok((
+                    bool_from_sql(row.get(0)?),
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or_else(|| anyhow!("Cloud backup isn't set up yet."))?;
+
+    if !enabled {
+        return Err(anyhow!("Cloud backup isn't enabled."));
+    }
+    let webdav_url = webdav_url.ok_or_else(|| anyhow!("Cloud backup isn't fully configured."))?;
+    let webdav_username = webdav_username.unwrap_or_default();
+
+    let webdav_password = crate::secret_store::read(crate::secret_store::WEBDAV_PASSWORD, user_id)
+        .ok_or_else(|| anyhow!("WebDAV password is missing — re-enable cloud backup to re-enter it."))?;
+    let recovery_key = crate::secret_store::read(crate::secret_store::BACKUP_KEY, user_id)
+        .ok_or_else(|| anyhow!("Recovery key is missing — re-enable cloud backup to generate a new one."))?;
+
+    let directory = backup_dir()?;
+    let backup_entry = create_backup_in_dir(conn, &directory)?;
+    let backup_path = directory.join(&backup_entry.file_name);
+
+    Ok(CloudSyncContext {
+        webdav_url,
+        webdav_username,
+        webdav_password,
+        remote_path,
+        recovery_key,
+        backup_path,
+    })
+}
+
+/// Records the outcome of a cloud-sync attempt after the (lock-free) network
+/// upload completes. Called under a fresh, brief lock, separate from
+/// `prepare_cloud_sync`.
+pub fn record_cloud_sync_result(conn: &Connection, user_id: i64, error: Option<&str>) -> Result<()> {
+    conn.execute(
+        "UPDATE cloud_backup_settings SET last_synced_at = ?, last_sync_error = ? WHERE user_id = ?",
+        params![now_string(), error, user_id],
+    )?;
+    Ok(())
+}
+
+/// Replaces the live vault database with `plaintext` (a decrypted backup
+/// file's bytes) and swaps it into the shared connection in place — no app
+/// restart needed. Used to restore a fresh install from a cloud backup, where
+/// no valid session/JWT can exist yet.
+pub async fn restore_vault_from_bytes(db: &Arc<Mutex<Connection>>, plaintext: &[u8]) -> Result<()> {
+    restore_vault_from_bytes_at(db, plaintext, &db_path()?).await
+}
+
+/// Path-explicit half of `restore_vault_from_bytes`, so tests can point it at
+/// a tempdir instead of the real OS app-data directory.
+pub async fn restore_vault_from_bytes_at(
+    db: &Arc<Mutex<Connection>>,
+    plaintext: &[u8],
+    path: &std::path::Path,
+) -> Result<()> {
+    let tmp_path = path.with_extension("db.restoring");
+    fs::write(&tmp_path, plaintext)?;
+
+    // Sanity check before committing to it: does it even open as a valid
+    // Perpetua vault? Guards against a corrupted download silently bricking
+    // the live vault.
+    {
+        let probe = Connection::open(&tmp_path)?;
+        probe.query_row("SELECT COUNT(*) FROM users", [], |row| row.get::<_, i64>(0))?;
+    }
+
+    let mut guard = db.lock().await;
+    // Release the old connection's file handle before renaming over it —
+    // required on Windows, which won't allow replacing an open file.
+    drop(std::mem::replace(&mut *guard, Connection::open_in_memory()?));
+    fs::rename(&tmp_path, &path)?;
+    *guard = Connection::open(&path)?;
 
     Ok(())
 }
