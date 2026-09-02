@@ -2,7 +2,7 @@
 name = "perpetua"
 version = "1.0.0"
 description = "Lifetime License Manager Application"
-authors = ["you"]
+authors = ["Hammurabi Coding Company, LLC"]
 license = "LicenseRef-Proprietary"
 repository = ""
 edition = "2021"

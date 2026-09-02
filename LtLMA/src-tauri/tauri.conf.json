@@ -1,5 +1,5 @@
 {
-  "$schema": "../node_modules/@tauri-apps/cli/schema.json",
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Perpetua",
   "version": "1.0.0",
   "identifier": "com.perpetua.app",
@@ -31,6 +31,8 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "Hammurabi Coding Company, LLC",
+    "copyright": "Copyright © 2026 Hammurabi Coding Company, LLC",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

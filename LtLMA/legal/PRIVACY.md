@@ -36,7 +36,7 @@ Keychain / Secret Service), not in the SQLite file.
 | None of the above | — | — |
 
 Perpetua does **not** send product telemetry, analytics, or vault contents to
-Hammurabi Coding Company servers during normal use.
+Hammurabi Coding Company, LLC servers during normal use.
 
 ## Free tier and Pro
 
