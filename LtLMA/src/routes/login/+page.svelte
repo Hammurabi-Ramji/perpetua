@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { auth } from '$lib/stores/auth';
-	import { forgotPassword, resetPassword } from '$lib/api';
+	import { clearStoredToken, forgotPassword, resetPassword, restoreCloudBackup } from '$lib/api';
 
-	let mode: 'login' | 'register' | 'forgot' = 'login';
+	let mode: 'login' | 'register' | 'forgot' | 'restore' = 'login';
 	let email = '';
 	let password = '';
 
@@ -13,6 +13,15 @@
 	let forgotError = '';
 	let resetCode = '';
 	let newPassword = '';
+
+	let restoreWebdavUrl = '';
+	let restoreWebdavUsername = '';
+	let restoreWebdavPassword = '';
+	let restoreRemotePath = '/perpetua-backups';
+	let restoreRecoveryKey = '';
+	let restoreBusy = false;
+	let restoreError = '';
+	let restoreDone = false;
 
 	function submit() {
 		if (mode === 'login') {
@@ -58,6 +67,34 @@
 			forgotError = error instanceof Error ? error.message : 'Could not reset password';
 		} finally {
 			forgotBusy = false;
+		}
+	}
+
+	function openRestore() {
+		mode = 'restore';
+		restoreError = '';
+		restoreDone = false;
+	}
+
+	async function submitRestore() {
+		restoreBusy = true;
+		restoreError = '';
+		try {
+			// No session can exist yet on a fresh install — clear anything stale
+			// before restoring, so the post-restore login is unambiguous.
+			clearStoredToken();
+			await restoreCloudBackup({
+				webdav_url: restoreWebdavUrl.trim(),
+				webdav_username: restoreWebdavUsername.trim(),
+				webdav_password: restoreWebdavPassword,
+				remote_path: restoreRemotePath.trim() || '/perpetua-backups',
+				recovery_key: restoreRecoveryKey.trim()
+			});
+			restoreDone = true;
+		} catch (error) {
+			restoreError = error instanceof Error ? error.message : 'Could not restore from cloud backup';
+		} finally {
+			restoreBusy = false;
 		}
 	}
 </script>
@@ -118,6 +155,52 @@
 			{/if}
 
 			<button type="button" class="linkish" on:click={() => (mode = 'login')}>Back to sign in</button>
+		{:else if mode === 'restore'}
+			<div>
+				<p class="eyebrow">Cloud backup restore</p>
+				<h1>Get your vault back.</h1>
+				<p class="muted">
+					Restores your full vault — accounts, licenses, everything — from an encrypted cloud
+					backup made by a previous install. You'll need the same WebDAV credentials and the
+					recovery key you saved (or received by email) when you first enabled cloud backup.
+				</p>
+			</div>
+
+			{#if restoreDone}
+				<p class="success-banner">Vault restored. Sign in below with your restored account.</p>
+				<button type="button" class="linkish" on:click={() => (mode = 'login')}>Back to sign in</button>
+			{:else}
+				<form class="auth-form" on:submit|preventDefault={submitRestore}>
+					<label>
+						<span>WebDAV server URL</span>
+						<input bind:value={restoreWebdavUrl} placeholder="https://app.koofr.net/dav/Koofr" required />
+					</label>
+					<label>
+						<span>Username</span>
+						<input bind:value={restoreWebdavUsername} placeholder="you@example.com" required />
+					</label>
+					<label>
+						<span>Password</span>
+						<input bind:value={restoreWebdavPassword} type="password" required />
+					</label>
+					<label>
+						<span>Remote folder</span>
+						<input bind:value={restoreRemotePath} placeholder="/perpetua-backups" />
+					</label>
+					<label>
+						<span>Recovery key</span>
+						<input bind:value={restoreRecoveryKey} placeholder="Paste the key you saved" required />
+					</label>
+
+					{#if restoreError}
+						<p class="error-banner">{restoreError}</p>
+					{/if}
+
+					<button type="submit" disabled={restoreBusy}>{restoreBusy ? 'Restoring...' : 'Restore vault'}</button>
+				</form>
+
+				<button type="button" class="linkish" on:click={() => (mode = 'login')}>Back to sign in</button>
+			{/if}
 		{:else}
 			<div class="auth-toggle">
 				<button type="button" class:active={mode === 'login'} on:click={() => (mode = 'login')}>Sign in</button>
@@ -152,7 +235,10 @@
 			</form>
 
 			{#if mode === 'login'}
-				<button type="button" class="linkish" on:click={openForgotPassword}>Forgot password?</button>
+				<div class="stack">
+					<button type="button" class="linkish" on:click={openForgotPassword}>Forgot password?</button>
+					<button type="button" class="linkish" on:click={openRestore}>Restore from cloud backup</button>
+				</div>
 			{/if}
 		{/if}
 	</section>

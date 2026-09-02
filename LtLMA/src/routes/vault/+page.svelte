@@ -3,13 +3,16 @@
 
 	import {
 		createBackup,
+		enableCloudBackup,
 		exportLicensesCsv,
 		exportLicensesJson,
+		getCloudBackupSettings,
 		importLicenses,
-		listBackups
+		listBackups,
+		syncCloudBackupNow
 	} from '$lib/api';
-	import { handleAddError } from '$lib/stores/entitlement';
-	import type { BackupEntry, ImportLicensesResult } from '$lib/types';
+	import { entitlement, handleAddError, refreshEntitlement } from '$lib/stores/entitlement';
+	import type { BackupEntry, CloudBackupSettings, ImportLicensesResult } from '$lib/types';
 
 	let backups: BackupEntry[] = [];
 	let loading = true;
@@ -21,6 +24,19 @@
 	let importSummary: ImportLicensesResult | null = null;
 	let error: string | null = null;
 	let successMessage = '';
+
+	let cloudSettings: CloudBackupSettings | null = null;
+	let webdavUrl = '';
+	let webdavUsername = '';
+	let webdavPassword = '';
+	let remotePath = '/perpetua-backups';
+	let cloudBusy = false;
+	let cloudSyncBusy = false;
+	let cloudError = '';
+	let cloudMessage = '';
+	// Shown exactly once, right after enabling — never retrievable again after this.
+	let revealedRecoveryKey: string | null = null;
+	let revealedRecoveryKeyEmailed = false;
 
 	async function loadBackups() {
 		loading = true;
@@ -112,7 +128,74 @@
 		return `${(bytes / 1024 ** index).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
 	}
 
-	onMount(loadBackups);
+	async function loadCloudSettings() {
+		try {
+			cloudSettings = await getCloudBackupSettings();
+			if (cloudSettings.webdav_url) webdavUrl = cloudSettings.webdav_url;
+			if (cloudSettings.webdav_username) webdavUsername = cloudSettings.webdav_username;
+			if (cloudSettings.remote_path) remotePath = cloudSettings.remote_path;
+		} catch {
+			cloudSettings = null;
+		}
+	}
+
+	async function handleEnableCloudBackup() {
+		cloudBusy = true;
+		cloudError = '';
+		cloudMessage = '';
+		try {
+			const result = await enableCloudBackup({
+				webdav_url: webdavUrl.trim(),
+				webdav_username: webdavUsername.trim(),
+				webdav_password: webdavPassword,
+				remote_path: remotePath.trim() || '/perpetua-backups'
+			});
+			webdavPassword = '';
+			revealedRecoveryKey = result.recovery_key;
+			revealedRecoveryKeyEmailed = result.emailed;
+			cloudMessage = result.emailed
+				? 'Cloud backup enabled. A copy of your recovery key was also emailed to your backup address.'
+				: "Cloud backup enabled, but the safety-net email couldn't be sent — make sure to save the key below.";
+			await loadCloudSettings();
+		} catch (enableError) {
+			if (!handleAddError(enableError)) {
+				cloudError = enableError instanceof Error ? enableError.message : 'Failed to enable cloud backup';
+			}
+		} finally {
+			cloudBusy = false;
+		}
+	}
+
+	async function handleSyncCloudBackup() {
+		cloudSyncBusy = true;
+		cloudError = '';
+		cloudMessage = '';
+		try {
+			cloudSettings = await syncCloudBackupNow();
+			cloudMessage = cloudSettings.last_sync_error
+				? `Sync finished with an error: ${cloudSettings.last_sync_error}`
+				: 'Backed up to the cloud just now.';
+		} catch (syncError) {
+			cloudError = syncError instanceof Error ? syncError.message : 'Cloud backup failed';
+		} finally {
+			cloudSyncBusy = false;
+		}
+	}
+
+	async function copyRecoveryKey() {
+		if (!revealedRecoveryKey) return;
+		try {
+			await navigator.clipboard.writeText(revealedRecoveryKey);
+			cloudMessage = 'Recovery key copied to clipboard.';
+		} catch {
+			// Clipboard access can be denied by the OS/webview — the key is still
+			// selectable text on screen, so this is a nice-to-have, not required.
+		}
+	}
+
+	onMount(async () => {
+		await Promise.all([loadBackups(), loadCloudSettings(), refreshEntitlement()]);
+	});
 </script>
 
 <svelte:head>
@@ -235,3 +318,113 @@
 		</div>
 	{/if}
 </section>
+
+<section class="panel">
+	<div class="panel-heading">
+		<div>
+			<h3>Cloud backup (WebDAV)</h3>
+			<p class="muted">
+				Encrypted off-device copy of your vault, sent to your own cloud storage (Koofr and other
+				WebDAV-speaking providers work). Encrypted before it ever leaves this device — Perpetua
+				never sees the key.
+			</p>
+		</div>
+	</div>
+
+	{#if !$entitlement?.pro}
+		<p class="empty-state">Cloud backup is a Pro feature. Unlock unlimited to enable it.</p>
+	{:else}
+		<form class="license-form" on:submit|preventDefault={handleEnableCloudBackup}>
+			<div class="form-grid">
+				<label>
+					<span>WebDAV server URL</span>
+					<input bind:value={webdavUrl} placeholder="https://app.koofr.net/dav/Koofr" required />
+				</label>
+				<label>
+					<span>Username</span>
+					<input bind:value={webdavUsername} placeholder="you@example.com" required />
+				</label>
+				<label>
+					<span>Password</span>
+					<input bind:value={webdavPassword} type="password" placeholder={cloudSettings?.enabled ? 'Unchanged' : 'App password'} />
+				</label>
+				<label>
+					<span>Remote folder</span>
+					<input bind:value={remotePath} placeholder="/perpetua-backups" />
+				</label>
+			</div>
+
+			<p class="muted small">
+				{cloudSettings?.enabled
+					? 'Re-enabling generates a new recovery key and re-emails it — do this if you change your WebDAV credentials.'
+					: 'Requires a backup email and SMTP relay to already be configured above under Reminders, since that\'s where the recovery-key safety-net copy is sent.'}
+			</p>
+
+			{#if cloudError}
+				<p class="error-banner">{cloudError}</p>
+			{/if}
+			{#if cloudMessage}
+				<p class="success-banner">{cloudMessage}</p>
+			{/if}
+
+			<div class="actions">
+				<button type="submit" disabled={cloudBusy}>
+					{cloudBusy ? 'Enabling...' : cloudSettings?.enabled ? 'Update cloud backup' : 'Enable cloud backup'}
+				</button>
+				{#if cloudSettings?.enabled}
+					<button type="button" class="secondary" disabled={cloudSyncBusy} on:click={handleSyncCloudBackup}>
+						{cloudSyncBusy ? 'Backing up...' : 'Back up to cloud now'}
+					</button>
+				{/if}
+			</div>
+		</form>
+
+		{#if revealedRecoveryKey}
+			<div class="recovery-key-banner">
+				<p><strong>Save this recovery key now — it will not be shown again.</strong></p>
+				<p class="muted small">
+					Without it, your encrypted cloud backup cannot be decrypted, even by you.
+					{revealedRecoveryKeyEmailed ? ' A copy was also emailed to your backup address as a safety net.' : ''}
+				</p>
+				<code>{revealedRecoveryKey}</code>
+				<div class="actions">
+					<button type="button" class="secondary" on:click={copyRecoveryKey}>Copy key</button>
+					<button type="button" class="secondary" on:click={() => (revealedRecoveryKey = null)}>I've saved it</button>
+				</div>
+			</div>
+		{/if}
+
+		{#if cloudSettings?.enabled}
+			<p class="muted small" style="margin-top: 1rem;">
+				{#if cloudSettings.last_synced_at}
+					Last backed up {new Date(cloudSettings.last_synced_at).toLocaleString()}.
+				{:else}
+					Not backed up to the cloud yet.
+				{/if}
+				{#if cloudSettings.last_sync_error}
+					<span class="error-banner">Last attempt failed: {cloudSettings.last_sync_error}</span>
+				{/if}
+			</p>
+		{/if}
+	{/if}
+</section>
+
+<style>
+	.recovery-key-banner {
+		margin-top: 1rem;
+		padding: 1rem;
+		border-radius: 0.5rem;
+		border: 1px solid rgba(220, 170, 60, 0.4);
+		background: rgba(220, 170, 60, 0.1);
+	}
+
+	.recovery-key-banner code {
+		display: block;
+		margin: 0.5rem 0;
+		padding: 0.5rem;
+		border-radius: 0.35rem;
+		background: rgba(0, 0, 0, 0.25);
+		word-break: break-all;
+		font-size: 0.9rem;
+	}
+</style>

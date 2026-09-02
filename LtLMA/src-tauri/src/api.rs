@@ -12,19 +12,21 @@ use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
 
 use crate::models::{
-    AccountRecoverySettings, ActivateRequest, ApiResponse, CreateSiteRequest, ForgotPasswordRequest,
-    ImportLicensesRequest, InviteMemberRequest, LicensePayload, LicenseUpdate, LoginRequest,
-    RedeemInviteRequest, RegisterRequest, ReminderSettingsUpdate, ResetPasswordRequest,
+    AccountRecoverySettings, ActivateRequest, ApiResponse, CreateSiteRequest, EnableCloudBackupRequest,
+    EnableCloudBackupResult, ForgotPasswordRequest, ImportLicensesRequest, InviteMemberRequest,
+    LicensePayload, LicenseUpdate, LoginRequest, RedeemInviteRequest, RegisterRequest,
+    ReminderSettingsUpdate, ResetPasswordRequest, RestoreCloudBackupRequest,
 };
 use crate::services::{
     activate_pro, add_license, authenticate_user, build_auth_response, confirm_password_reset,
     connect_site, create_backup, create_site, create_user, delete_license, delete_site,
-    disconnect_site, export_licenses_csv, export_licenses_json, get_account_recovery_settings,
-    get_entitlement, get_license_by_id, get_license_stats, get_licenses, get_reminder_items,
-    get_reminder_settings, get_user_by_email, get_user_by_id, import_licenses_csv,
-    import_licenses_json, list_backups, list_site_connections, list_vault_members,
-    mark_license_active, mark_onboarding_complete, mark_pro_activated, prepare_invite,
-    prepare_password_reset, redeem_invite, resolve_data_owner_id, update_account_recovery_settings,
+    disconnect_site, enable_cloud_backup, export_licenses_csv, export_licenses_json,
+    get_account_recovery_settings, get_cloud_backup_settings, get_entitlement, get_license_by_id,
+    get_license_stats, get_licenses, get_reminder_items, get_reminder_settings, get_user_by_email,
+    get_user_by_id, import_licenses_csv, import_licenses_json, list_backups, list_site_connections,
+    list_vault_members, mark_license_active, mark_onboarding_complete, mark_pro_activated,
+    prepare_cloud_sync, prepare_invite, prepare_password_reset, record_cloud_sync_result,
+    redeem_invite, resolve_data_owner_id, restore_vault_from_bytes, update_account_recovery_settings,
     update_license, update_reminder_settings, validate_credentials, verify_jwt, FreeLimitReached,
 };
 use rusqlite::Connection;
@@ -126,6 +128,10 @@ pub(crate) fn build_router(db: Arc<Mutex<Connection>>, jwt_secret: Arc<String>) 
         .route("/api/vault/export/csv", get(export_csv_route))
         .route("/api/vault/import", post(import_licenses_route))
         .route("/api/vault/backups", get(get_backups_route).post(create_backup_route))
+        .route("/api/cloud-backup/settings", get(get_cloud_backup_settings_route))
+        .route("/api/cloud-backup/enable", post(enable_cloud_backup_route))
+        .route("/api/cloud-backup/sync", post(sync_cloud_backup_route))
+        .route("/api/cloud-backup/restore", post(restore_cloud_backup_route))
         .route("/api/reminders/items", get(get_reminder_items_route))
         .route("/api/reminders/settings", get(get_settings).patch(update_settings))
         .route("/api/vendor-policies", get(vendor_policies_meta))
@@ -1001,5 +1007,138 @@ async fn create_backup_route(
     match create_backup(&conn) {
         Ok(backup) => created(backup),
         Err(_) => failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to create backup"),
+    }
+}
+
+async fn get_cloud_backup_settings_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+
+    let conn = db.lock().await;
+    match get_cloud_backup_settings(&conn, user.id) {
+        Ok(settings) => success(settings),
+        Err(_) => failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to fetch cloud backup settings"),
+    }
+}
+
+async fn enable_cloud_backup_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+    Json(req): Json<EnableCloudBackupRequest>,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+
+    let prepared = {
+        let conn = db.lock().await;
+        enable_cloud_backup(&conn, user.id, req)
+    };
+
+    let (mail_settings, backup_email, recovery_key) = match prepared {
+        Ok(prepared) => prepared,
+        Err(error) => return failure(StatusCode::BAD_REQUEST, &error.to_string()),
+    };
+
+    let email_result = crate::mail::send_email(
+        &mail_settings,
+        &backup_email,
+        "Your Perpetua cloud backup recovery key",
+        &format!(
+            "Cloud backup is now enabled for your Perpetua vault.\n\nYour recovery key is:\n\n{recovery_key}\n\nSAVE THIS SOMEWHERE SAFE. Perpetua cannot recover it for you — without it, your encrypted cloud backup cannot be decrypted, even by you. This email is a safety net in case you lose the copy you were shown in the app.\n\nIf you didn't enable cloud backup, someone with access to this device did — check your account."
+        ),
+    )
+    .await;
+
+    // Enabling cloud backup and generating the key must not be rolled back
+    // just because SMTP hiccupped — the on-screen display is the primary
+    // safety net, this email is secondary.
+    let result = match email_result {
+        Ok(_) => EnableCloudBackupResult { recovery_key, emailed: true, email_error: None },
+        Err(error) => EnableCloudBackupResult { recovery_key, emailed: false, email_error: Some(error.to_string()) },
+    };
+    success(result)
+}
+
+async fn sync_cloud_backup_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+
+    let prepared = {
+        let conn = db.lock().await;
+        prepare_cloud_sync(&conn, user.id)
+    };
+
+    let context = match prepared {
+        Ok(context) => context,
+        Err(error) => return failure(StatusCode::BAD_REQUEST, &error.to_string()),
+    };
+
+    let plaintext = match std::fs::read(&context.backup_path) {
+        Ok(bytes) => bytes,
+        Err(_) => return failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to read local backup"),
+    };
+
+    let target = crate::cloud_backup::WebDavTarget {
+        base_url: &context.webdav_url,
+        username: &context.webdav_username,
+        password: &context.webdav_password,
+        remote_path: &context.remote_path,
+    };
+
+    let upload_result = crate::cloud_backup::upload(&target, &context.recovery_key, &plaintext).await;
+
+    let conn = db.lock().await;
+    let error_message = upload_result.as_ref().err().map(|error| error.to_string());
+    let _ = record_cloud_sync_result(&conn, user.id, error_message.as_deref());
+
+    match upload_result {
+        Ok(_) => match get_cloud_backup_settings(&conn, user.id) {
+            Ok(settings) => success(settings),
+            Err(_) => failure(StatusCode::INTERNAL_SERVER_ERROR, "Backup uploaded, but failed to refresh status"),
+        },
+        Err(error) => failure(StatusCode::BAD_GATEWAY, &error.to_string()),
+    }
+}
+
+/// Unauthenticated by design: a brand-new install has no local user account
+/// to log in with, so restoring from a cloud backup is how it gets one. Rate
+/// limited the same as login/register since WebDAV creds + a recovery key
+/// form a credential-guessing surface.
+async fn restore_cloud_backup_route(
+    State((db, _jwt_secret)): State<(DbState, Arc<String>)>,
+    Extension(limiter): Extension<AuthRateLimiter>,
+    Json(req): Json<RestoreCloudBackupRequest>,
+) -> Response {
+    if !limiter.0.allow() {
+        return rate_limited();
+    }
+
+    let target = crate::cloud_backup::WebDavTarget {
+        base_url: &req.webdav_url,
+        username: &req.webdav_username,
+        password: &req.webdav_password,
+        remote_path: &req.remote_path,
+    };
+
+    let plaintext = match crate::cloud_backup::download(&target, &req.recovery_key).await {
+        Ok(bytes) => bytes,
+        Err(error) => return failure(StatusCode::BAD_GATEWAY, &error.to_string()),
+    };
+
+    match restore_vault_from_bytes(&db, &plaintext).await {
+        Ok(()) => success(json!({ "restored": true })),
+        Err(error) => failure(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
     }
 }

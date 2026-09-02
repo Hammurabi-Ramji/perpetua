@@ -2,6 +2,9 @@ import type {
   AccountRecoverySettings,
   AuthResponse,
   BackupEntry,
+  CloudBackupSettings,
+  EnableCloudBackupInput,
+  EnableCloudBackupResult,
   Entitlement,
   ImportLicensesResult,
   License,
@@ -9,6 +12,7 @@ import type {
   LicenseStats,
   ReminderItem,
   ReminderSettings,
+  RestoreCloudBackupInput,
   SiteConnection,
   User,
   VaultExportFile,
@@ -293,6 +297,31 @@ export function listBackups() {
 
 export function createBackup() {
   return request<BackupEntry>("/vault/backups", { method: "POST" });
+}
+
+export function getCloudBackupSettings() {
+  return request<CloudBackupSettings>("/cloud-backup/settings");
+}
+
+export function enableCloudBackup(input: EnableCloudBackupInput) {
+  return request<EnableCloudBackupResult>("/cloud-backup/enable", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function syncCloudBackupNow() {
+  return request<CloudBackupSettings>("/cloud-backup/sync", { method: "POST" });
+}
+
+// Unauthenticated on the backend by design — a fresh install has no session
+// yet. request() only attaches a token if one already exists in
+// localStorage, so this is safe to call before login the same way.
+export function restoreCloudBackup(input: RestoreCloudBackupInput) {
+  return request<{ restored: boolean }>("/cloud-backup/restore", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 export type VendorPolicySuggestion = {

@@ -16,10 +16,12 @@ struct AppState {
 }
 
 mod api;
+mod cloud_backup;
 mod database;
 mod mail;
 mod models;
 mod polar;
+mod secret_store;
 mod services;
 mod vendor_policy;
 #[cfg(test)]
