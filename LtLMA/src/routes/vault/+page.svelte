@@ -7,6 +7,7 @@
 		exportLicensesCsv,
 		exportLicensesJson,
 		getCloudBackupSettings,
+		getStoredToken,
 		importLicenses,
 		listBackups,
 		syncCloudBackupNow
@@ -37,6 +38,25 @@
 	// Shown exactly once, right after enabling — never retrievable again after this.
 	let revealedRecoveryKey: string | null = null;
 	let revealedRecoveryKeyEmailed = false;
+
+	let extensionTokenRevealed = false;
+	let extensionTokenMessage = '';
+
+	function revealExtensionToken() {
+		extensionTokenRevealed = true;
+	}
+
+	async function copyExtensionToken() {
+		const token = getStoredToken();
+		if (!token) return;
+		try {
+			await navigator.clipboard.writeText(token);
+			extensionTokenMessage = 'Token copied. Paste it into the extension’s settings page.';
+		} catch {
+			// Clipboard access can be denied — the token is still visible as
+			// selectable text on screen, so this is a nice-to-have, not required.
+		}
+	}
 
 	async function loadBackups() {
 		loading = true;
@@ -409,7 +429,49 @@
 	{/if}
 </section>
 
+<section class="panel">
+	<div class="panel-heading">
+		<div>
+			<h3>Browser extension</h3>
+			<p class="muted">
+				Pair the Perpetua companion browser extension so it can add licenses it captures
+				from AppSumo, Product Hunt, StackSocial, and Humble Bundle straight into this vault.
+			</p>
+		</div>
+	</div>
+
+	{#if !extensionTokenRevealed}
+		<div class="actions">
+			<button type="button" class="secondary" on:click={revealExtensionToken}>Reveal token for extension</button>
+		</div>
+	{:else}
+		<p class="muted small">
+			Paste this into the extension's settings page (Options &gt; Perpetua token). Treat it like a
+			password — it's a real 30-day credential. If syncing stops working, sign back into Perpetua
+			and copy a fresh one.
+		</p>
+		<code class="token-display">{getStoredToken() ?? '(no token — sign in first)'}</code>
+		{#if extensionTokenMessage}
+			<p class="success-banner">{extensionTokenMessage}</p>
+		{/if}
+		<div class="actions">
+			<button type="button" class="secondary" on:click={copyExtensionToken}>Copy token</button>
+			<button type="button" class="secondary" on:click={() => (extensionTokenRevealed = false)}>Hide</button>
+		</div>
+	{/if}
+</section>
+
 <style>
+	.token-display {
+		display: block;
+		margin: 0.5rem 0;
+		padding: 0.5rem;
+		border-radius: 0.35rem;
+		background: rgba(0, 0, 0, 0.25);
+		word-break: break-all;
+		font-size: 0.85rem;
+	}
+
 	.recovery-key-banner {
 		margin-top: 1rem;
 		padding: 1rem;
