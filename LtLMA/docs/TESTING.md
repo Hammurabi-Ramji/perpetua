@@ -4,11 +4,6 @@ This document catalogs the full quality picture for **Perpetua** — the local-f
 desktop app (Tauri + SvelteKit + Rust + SQLite), the edition being taken to
 market. (The source folder is still named `LtLMA`, the original codename.)
 
-> Scope note: the repo also contains **LtLM** (the web edition: Node/Express +
-> React + browser/VSCode extensions). LtLM has its own separate test setup
-> (including the Playwright suite — see [Playwright](#8-playwright-e2e)). LtLM is
-> **not** covered by the gates below and is out of scope for the Perpetua launch.
-
 ---
 
 ## 1. Quality gates (commands)
@@ -202,19 +197,12 @@ Prereq: build the Rust binary first (`cd src-tauri && cargo build`); the config
 references `src-tauri/target/debug/perpetua`. The backend runs offline (no Polar org
 id), so the test mints its own key via `perpetua mint-key`.
 
-Separately, an **unrelated** Playwright suite at `PERPETUA/tests/e2e/main-app.spec.js`
-targets the **LtLM web edition** (it drives `/greta`, `/twidget`, `/pickaxe`,
-`/eduba` — features that exist only in LtLM) with a fully mocked API. It is not
-part of Perpetua's gates.
-
 ---
 
 ## 9. Known gaps
 
 - **Code signing** — the Tauri installer is unsigned; an **EV** certificate is
   required to avoid Windows SmartScreen warnings at install.
-- **LtLM web edition** is not covered by the Perpetua gates and hasn't been verified
-  in this effort.
 
 ---
 

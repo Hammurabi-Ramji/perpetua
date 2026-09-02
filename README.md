@@ -1,18 +1,12 @@
 # PERPETUA
 
-Dual-edition lifetime license management tree.
+Local-first lifetime license manager.
 
-| Edition | Path | Role |
-|---------|------|------|
-| **Perpetua** (launch) | [`LtLMA/`](./LtLMA/) | Local-first **desktop** app (Tauri 2 + SvelteKit + Rust/Axum + SQLite) |
-| **LicenseVault** (secondary) | [`LtLM/`](./LtLM/) | Web API + React UI + browser / VS Code extensions |
+**Perpetua** — [`LtLMA/`](./LtLMA/) — Desktop app (Tauri 2 + SvelteKit + Rust/Axum + SQLite), plus a companion browser extension ([`LtLMA/browser-extension/`](./LtLMA/browser-extension/)) that captures license purchases from deal sites straight into your local vault.
 
-Market name for the shipping desktop product: **Perpetua**.  
-LicenseVault remains the brand for the web/capture surfaces.
+**Version:** 1.0.0 (`LtLMA/`)
 
-**Desktop version:** 1.0.0 (`LtLMA/`)
-
-## Quick start (desktop — launch product)
+## Quick start
 
 ```powershell
 cd LtLMA
@@ -20,7 +14,7 @@ npm ci
 npm run tauri dev
 ```
 
-### Desktop release build
+### Release build
 
 ```powershell
 cd LtLMA
@@ -28,7 +22,7 @@ npm ci
 .\build-release.ps1
 ```
 
-Produces `perpetua.exe` plus MSI/NSIS under `LtLMA\src-tauri\target\release\`.  
+Produces `perpetua.exe` plus MSI/NSIS under `LtLMA\src-tauri\target\release\`.
 Details: [`LtLMA/docs/RELEASE.md`](./LtLMA/docs/RELEASE.md) · smoke: [`LtLMA/docs/SMOKE_TEST.md`](./LtLMA/docs/SMOKE_TEST.md)
 
 ### Using Perpetua
@@ -39,13 +33,13 @@ Details: [`LtLMA/docs/RELEASE.md`](./LtLMA/docs/RELEASE.md) · smoke: [`LtLMA/do
 
 ## Legal
 
-- Root [`LICENSE`](./LICENSE) — proprietary commercial terms  
-- Product pack: [`LtLMA/legal/`](./LtLMA/legal/) — Privacy, Terms/EULA, Support  
+- Root [`LICENSE`](./LICENSE) — proprietary commercial terms
+- Product pack: [`LtLMA/legal/`](./LtLMA/legal/) — Privacy, Terms/EULA, Support
 
 ## CI
 
-- Desktop gates: [`.github/workflows/perpetua-ci.yml`](./.github/workflows/perpetua-ci.yml) → `LtLMA/`  
-- Web/deploy: [`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml) → `LtLM/`  
+- Quality gates: [`.github/workflows/perpetua-ci.yml`](./.github/workflows/perpetua-ci.yml)
+- Release builds: [`.github/workflows/release.yml`](./.github/workflows/release.yml)
 
 ## Hygiene
 
