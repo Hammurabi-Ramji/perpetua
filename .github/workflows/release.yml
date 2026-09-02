@@ -83,6 +83,9 @@ jobs:
           # Optional: bake in Polar activation for this build. Unset = offline
           # self-issued keys only (same as a local build with no org id set).
           POLAR_ORGANIZATION_ID: ${{ secrets.POLAR_ORGANIZATION_ID }}
+          # Required: signs offline-issued Pro license keys. Release builds
+          # fail to compile without this set (see src-tauri/src/services.rs).
+          PERPETUA_LICENSE_SECRET: ${{ secrets.PERPETUA_LICENSE_SECRET }}
 
       - name: Stash installers
         uses: actions/upload-artifact@v4

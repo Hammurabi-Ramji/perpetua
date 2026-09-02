@@ -23,7 +23,10 @@ On your device, Perpetua may store:
 
 **At rest:** the SQLite vault is **not encrypted at rest** in the current
 release. Protect device access accordingly; use OS disk encryption where
-available.
+available. The one exception is your SMTP relay password (if you configure
+backup-email password reset or vault sharing): that's stored in your
+operating system's credential store (Windows Credential Manager / macOS
+Keychain / Secret Service), not in the SQLite file.
 
 ## Data that may leave your device
 

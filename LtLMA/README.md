@@ -56,7 +56,7 @@ Full path + smoke checklist: [docs/RELEASE.md](./docs/RELEASE.md) · [docs/SMOKE
 | Local account | Register / login with bcrypt + JWT |
 | License vault | CRUD, dashboard stats, sites, reminders |
 | Keep-alive | Due notices + tray/background scheduler; vendor policy suggest (Phase 1) |
-| Free / Pro | Free cap 3 licenses; Pro via Polar activate or `perpetua mint-key` |
+| Free / Pro | Free cap 3 licenses; Pro via Polar activate, or offline fulfillment keys (internal builds only) |
 | Vault tools | JSON/CSV export, import, rotated SQLite backups |
 | Packaging | MSI + NSIS targets; unsigned direct-download MVP |
 
@@ -70,7 +70,7 @@ Archive docs under [`docs/archive/`](./docs/archive/) are historical and not aut
 - **Backend**: Axum on `127.0.0.1:18765` (embedded; override with `PERPETUA_API_PORT` / `VITE_PERPETUA_API_PORT`)
 - **Database**: SQLite under the OS app-data directory (+ local backups)
 - **Shell**: Tauri 2 tray, autostart, native notifications
-- **CLI helpers**: `perpetua serve`, `perpetua check-reminders`, `perpetua mint-key`, `perpetua config`
+- **CLI helpers**: `perpetua serve`, `perpetua check-reminders`, `perpetua config` (`perpetua mint-key` also exists in debug builds and internal fulfillment builds — not in the customer-facing release binary; see `docs/TESTING.md`)
 
 ---
 

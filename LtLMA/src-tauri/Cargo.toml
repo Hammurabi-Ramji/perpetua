@@ -39,11 +39,32 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1-rustls-tls", "tokio1", "builder"] }
 rand = "0.8"
 
+# Per-OS keyring backend: Windows Credential Manager, macOS Keychain, and
+# Linux Secret Service (GNOME Keyring/KWallet) respectively — matching what
+# legal/PRIVACY.md tells users their secrets are stored in. A single
+# `default-features = false, features = ["windows-native"]` dependency (no
+# `[target...]` split) silently ships without a functional keyring backend
+# on macOS/Linux, since `release.yml` builds all three platforms.
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3", default-features = false, features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", default-features = false, features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", default-features = false, features = ["sync-secret-service"] }
+
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem and the built-in dev server is disabled.
 # If you use cargo directly instead of tauri's cli you can use this feature flag to switch between tauri's `dev` and `build` modes.
 # DO NOT REMOVE!!
 custom-protocol = [ "tauri/custom-protocol" ]
+
+# Enables the `perpetua mint-key` fulfillment CLI verb in *release* builds.
+# Debug builds always have it (dev/test convenience — see main.rs). Never pass
+# this to build-release.ps1 / the customer-facing `tauri build`; only use it
+# for a separate internal fulfillment binary.
+fulfillment = []
 
 [dev-dependencies]
 tempfile = "3.17"

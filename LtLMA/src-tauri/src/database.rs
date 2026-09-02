@@ -194,6 +194,11 @@ pub fn init_db_at(base_dir: &Path) -> Result<Connection> {
         [],
     );
     let _ = conn.execute("ALTER TABLE users ADD COLUMN backup_email TEXT", []);
+    // Pending invites now expire (see prepare_invite). redeem_invite requires
+    // expires_at to be set and in the future, so any pre-migration invite rows
+    // (NULL expires_at) simply can no longer be redeemed — fail closed rather
+    // than treating them as never-expiring.
+    let _ = conn.execute("ALTER TABLE vault_members ADD COLUMN expires_at TEXT", []);
 
     seed_supported_sites(&conn)?;
     Ok(conn)
