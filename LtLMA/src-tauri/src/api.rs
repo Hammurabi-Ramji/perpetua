@@ -59,7 +59,13 @@ impl RateLimiter {
 
     fn allow(&self) -> bool {
         let now = Instant::now();
-        let mut hits = self.hits.lock().unwrap();
+        // Recover the guard even if poisoned (some other holder panicked
+        // while holding the lock) rather than propagating the panic here —
+        // this lock only ever guards a plain VecDeque of timestamps, so a
+        // poisoned-but-recovered guard is still perfectly usable, and a
+        // rate limiter that itself crashes the process on first fault would
+        // turn a minor issue into a denial-of-service amplifier.
+        let mut hits = self.hits.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         while matches!(hits.front(), Some(oldest) if now.duration_since(*oldest) > self.window) {
             hits.pop_front();
         }

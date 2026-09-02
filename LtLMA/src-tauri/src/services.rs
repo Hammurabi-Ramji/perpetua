@@ -1015,13 +1015,26 @@ pub fn get_account_recovery_settings(conn: &Connection, user_id: i64) -> Result<
         .optional()?
         .unwrap_or_default();
 
+    // Legacy plaintext still sitting in the DB column — either a pre-migration
+    // install, or a previous migration attempt that wrote to the keyring but
+    // crashed/failed before clearing the column. Basing the retry on "is the
+    // column non-empty" (not "did the keyring read miss") means a partial
+    // failure gets retried on every subsequent read instead of leaving the
+    // plaintext at rest forever the moment the keyring copy exists.
+    let legacy_plaintext = mail.smtp_password.clone().filter(|value| !value.is_empty());
+
     match smtp_secret::read(user_id) {
-        Some(password) => mail.smtp_password = Some(password),
+        Some(password) => {
+            mail.smtp_password = Some(password);
+            if legacy_plaintext.is_some() {
+                let _ = conn.execute(
+                    "UPDATE mail_settings SET smtp_password = NULL WHERE user_id = ?",
+                    params![user_id],
+                );
+            }
+        }
         None => {
-            // Pre-migration install: the password is still in the DB column from
-            // before this moved to the OS keyring. Move it over now so it stops
-            // sitting at rest in plaintext, then clear the column.
-            if let Some(legacy) = mail.smtp_password.clone().filter(|value| !value.is_empty()) {
+            if let Some(legacy) = legacy_plaintext {
                 if smtp_secret::write(user_id, &legacy).is_ok() {
                     let _ = conn.execute(
                         "UPDATE mail_settings SET smtp_password = NULL WHERE user_id = ?",

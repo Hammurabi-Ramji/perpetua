@@ -38,7 +38,21 @@ csv = "1.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1-rustls-tls", "tokio1", "builder"] }
 rand = "0.8"
+
+# Per-OS keyring backend: Windows Credential Manager, macOS Keychain, and
+# Linux Secret Service (GNOME Keyring/KWallet) respectively — matching what
+# legal/PRIVACY.md tells users their secrets are stored in. A single
+# `default-features = false, features = ["windows-native"]` dependency (no
+# `[target...]` split) silently ships without a functional keyring backend
+# on macOS/Linux, since `release.yml` builds all three platforms.
+[target.'cfg(windows)'.dependencies]
 keyring = { version = "3", default-features = false, features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", default-features = false, features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", default-features = false, features = ["sync-secret-service"] }
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem and the built-in dev server is disabled.
