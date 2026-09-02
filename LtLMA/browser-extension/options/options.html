@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>LicenseVault Settings</title>
+  <title>Perpetua Settings</title>
   <style>
     body {
       width: 400px;
@@ -105,15 +105,30 @@
   </style>
 </head>
 <body>
-  <div class="header">LicenseVault Settings</div>
+  <div class="header">Perpetua Settings</div>
 
   <form id="settings-form">
     <div class="section">
       <h3>API Configuration</h3>
       <div class="form-group">
-        <label for="apiBase">LicenseVault API URL</label>
-        <input type="url" id="apiBase" placeholder="http://localhost:3001">
+        <label for="apiBase">Perpetua API URL</label>
+        <input type="url" id="apiBase" placeholder="http://127.0.0.1:18765">
       </div>
+    </div>
+
+    <div class="section">
+      <h3>Account</h3>
+      <p style="font-size: 13px; opacity: 0.85; margin-top: 0;">
+        In Perpetua, go to Vault Tools &gt; Browser extension and copy your token, then paste it here.
+        It's a real credential — treat it like a password. It expires 30 days after your last Perpetua
+        login; if syncing stops working, sign back in and copy a fresh one.
+      </p>
+      <div class="form-group">
+        <label for="apiToken">Perpetua token</label>
+        <input type="password" id="apiToken" placeholder="Paste token from Perpetua > Vault Tools" autocomplete="off">
+      </div>
+      <button type="button" id="clear-token-button" class="button secondary">Clear token</button>
+      <button type="button" id="test-connection" class="button">Test Connection</button>
     </div>
 
     <div class="section">
@@ -130,19 +145,6 @@
           <label for="notifyOnNewLicenses">Show notifications for newly detected licenses</label>
         </div>
       </div>
-    </div>
-
-    <div class="section">
-      <h3>Connected Sites</h3>
-      <div id="connected-sites">
-        <p>No sites configured yet. Visit a supported deal site to connect.</p>
-      </div>
-    </div>
-
-    <div class="section">
-      <h3>Account</h3>
-      <button type="button" id="logout-button" class="button secondary">Sign Out</button>
-      <button type="button" id="test-connection" class="button">Test Connection</button>
     </div>
 
     <div style="margin-top: 20px;">

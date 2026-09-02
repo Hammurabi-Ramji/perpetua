@@ -1,5 +1,5 @@
 {
-  "name": "licensevault-browser-extension",
+  "name": "perpetua-browser-extension",
   "private": true,
   "scripts": {
     "test": "vitest run --globals --environment jsdom --maxWorkers=1"

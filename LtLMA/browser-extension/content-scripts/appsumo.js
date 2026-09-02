@@ -1,10 +1,10 @@
 // content-scripts/appsumo.js
-(function() {
+(function () {
   'use strict';
 
   // Prevent duplicate injection
-  if (window.__licenseVaultInjected) return;
-  window.__licenseVaultInjected = true;
+  if (window.__perpetuaInjected) return;
+  window.__perpetuaInjected = true;
 
   const SITE = 'appsumo';
   let syncInProgress = false;
@@ -13,7 +13,7 @@
     const licenses = [];
 
     // Wait for the purchases to load
-    await new Promise(resolve => {
+    await new Promise((resolve) => {
       const check = () => {
         if (document.querySelector('.purchase-item, .order-item, [data-testid*="purchase"]')) {
           resolve();
@@ -44,64 +44,29 @@
           element.querySelector('.purchase-date, [class*="date"]')?.textContent?.trim() ||
           element.querySelector('time')?.dateTime;
 
-        const redemptionUrl =
-          element.querySelector('a[href*="redeem"], a[href*="activate"]')?.href;
+        const redemptionUrl = element.querySelector('a[href*="redeem"], a[href*="activate"]')?.href;
 
-        const licenseKey =
-          element.querySelector('.license-key, code, [class*="key"]')?.textContent?.trim();
+        const licenseKey = element.querySelector('.license-key, code, [class*="key"]')?.textContent?.trim();
 
         const status = element.textContent.toLowerCase().includes('redeemed') ? 'redeemed' : 'pending';
 
         const productUrl =
-          element.querySelector('a[href*="/products/"]')?.href ||
-          element.querySelector('a')?.href;
+          element.querySelector('a[href*="/products/"]')?.href || element.querySelector('a')?.href;
 
         licenses.push({
           product_name: productName,
           purchase_date: purchaseDate ? new Date(purchaseDate).toISOString() : null,
-          redemption_url: redemptionUrl,
+          redemption_url: redemptionUrl || null,
           license_key: licenseKey || null,
-          status: status,
-          product_url: productUrl,
-          raw_data: element.outerHTML.substring(0, 1000) // For debugging
+          status,
+          product_url: productUrl || null,
         });
       } catch (err) {
-        console.error('LicenseVault: Error extracting license', err);
+        console.error('Perpetua: Error extracting license', err);
       }
     }
 
     return licenses;
-  }
-
-  // Auto-sync on page load with debounce
-  let autoSyncTimeout;
-  async function autoSync() {
-    if (syncInProgress) return;
-
-    clearTimeout(autoSyncTimeout);
-    autoSyncTimeout = setTimeout(async () => {
-      syncInProgress = true;
-
-      try {
-        const licenses = await extractLicenses();
-        if (licenses.length > 0) {
-          const response = await window.LicenseVaultAPI.syncLicenses(SITE, licenses);
-
-          // Show success indicator
-          showNotification(`Synced ${licenses.length} licenses from AppSumo`);
-
-          // Store sync timestamp
-          await chrome.storage.local.set({
-            [`lastSync_${SITE}`]: new Date().toISOString()
-          });
-        }
-      } catch (err) {
-        console.error('LicenseVault: Sync failed', err);
-        showNotification('Sync failed: ' + err.message, 'error');
-      } finally {
-        syncInProgress = false;
-      }
-    }, 2000); // Wait 2s for page to fully render
   }
 
   function showNotification(message, type = 'success') {
@@ -118,19 +83,44 @@
       font-family: system-ui, sans-serif;
       font-size: 14px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-      animation: slideIn 0.3s ease;
     `;
     div.textContent = message;
     document.body.appendChild(div);
-
     setTimeout(() => div.remove(), 4000);
   }
 
-  // Inject API client into page context
-  const script = document.createElement('script');
-  script.src = chrome.runtime.getURL('lib/api.js');
-  (document.head || document.documentElement).appendChild(script);
-  script.onload = () => script.remove();
+  // Extracts, then hands the raw data to the background worker — that's the
+  // only place the auth token lives and the only place that talks to
+  // Perpetua's API. This content script never calls fetch() itself.
+  let autoSyncTimeout;
+  async function autoSync() {
+    if (syncInProgress) return;
+
+    clearTimeout(autoSyncTimeout);
+    autoSyncTimeout = setTimeout(async () => {
+      syncInProgress = true;
+
+      try {
+        const licenses = await extractLicenses();
+        if (licenses.length > 0) {
+          const result = await chrome.runtime.sendMessage({ action: 'licensesScraped', site: SITE, licenses });
+          if (result && result.ok) {
+            if (result.imported > 0) {
+              showNotification(`Synced ${result.imported} license(s) from AppSumo`);
+            }
+          } else {
+            showNotification(`Sync failed: ${(result && result.error) || 'unknown error'}`, 'error');
+          }
+          await chrome.storage.local.set({ [`lastSync_${SITE}`]: new Date().toISOString() });
+        }
+      } catch (err) {
+        console.error('Perpetua: Sync failed', err);
+        showNotification('Sync failed: ' + err.message, 'error');
+      } finally {
+        syncInProgress = false;
+      }
+    }, 2000); // Wait 2s for page to fully render
+  }
 
   // Listen for page changes (SPA navigation)
   const observer = new MutationObserver(() => {
@@ -138,7 +128,6 @@
       autoSync();
     }
   });
-
   observer.observe(document.body, { childList: true, subtree: true });
 
   // Initial sync
@@ -148,6 +137,8 @@
     window.addEventListener('load', autoSync);
   }
 
-  // Expose for manual trigger
-  window.LicenseVaultExtract = extractLicenses;
+  // Manual re-sync, triggered from the popup via background.js
+  chrome.runtime.onMessage.addListener((request) => {
+    if (request.action === 'requestSync') autoSync();
+  });
 })();

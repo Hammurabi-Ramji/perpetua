@@ -14,18 +14,21 @@ describe('browser extension popup', () => {
     document.documentElement.innerHTML = popupHtml;
     global.chrome = {
       storage: {
-        sync: {
-          get: vi.fn().mockResolvedValue({ jwtToken: 'popup-token' })
+        local: {
+          get: vi.fn().mockResolvedValue({ apiToken: 'popup-token' })
         }
       },
       runtime: {
         sendMessage: vi.fn(async (message) => {
           if (message.action === 'getLicenses') {
-            return [
-              { id: 1, product_name: 'Suite Active', vendor: 'AppSumo', status: 'active', action_required: false }
-            ];
+            return {
+              ok: true,
+              licenses: [
+                { id: 1, product_name: 'Suite Active', source_site: 'appsumo', status: 'active' }
+              ]
+            };
           }
-          return undefined;
+          return { ok: true };
         }),
         openOptionsPage: vi.fn()
       }
@@ -46,6 +49,7 @@ describe('browser extension popup', () => {
     expect(document.getElementById('auth-status').textContent).toBe('Authenticated');
     expect(document.getElementById('authenticated-content').classList.contains('hidden')).toBe(false);
     expect(document.getElementById('licenses-list').textContent).toContain('Suite Active');
+    expect(document.getElementById('licenses-list').textContent).toContain('appsumo');
   });
 
   it('opens settings from the popup action button', async () => {
@@ -55,5 +59,14 @@ describe('browser extension popup', () => {
     document.getElementById('settings').click();
 
     expect(chrome.runtime.openOptionsPage).toHaveBeenCalled();
+  });
+
+  it('shows the login prompt with no token stored', async () => {
+    chrome.storage.local.get = vi.fn().mockResolvedValue({});
+    document.dispatchEvent(new Event('DOMContentLoaded'));
+    await flush();
+
+    expect(document.getElementById('auth-status').textContent).toBe('Not authenticated');
+    expect(document.getElementById('login-prompt').classList.contains('hidden')).toBe(false);
   });
 });

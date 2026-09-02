@@ -14,19 +14,16 @@ describe('browser extension options', () => {
     document.documentElement.innerHTML = optionsHtml;
     global.chrome = {
       storage: {
-        sync: {
+        local: {
           get: vi.fn().mockResolvedValue({
-            apiBase: 'http://localhost:3001',
+            apiBase: 'http://127.0.0.1:18765',
+            apiToken: 'stored-token',
             autoSync: true,
-            notifyOnNewLicenses: true,
-            connectedSites: [{ name: 'AppSumo', domain: 'appsumo.com' }]
+            notifyOnNewLicenses: true
           }),
           set: vi.fn().mockResolvedValue(undefined),
           remove: vi.fn().mockResolvedValue(undefined)
         }
-      },
-      tabs: {
-        create: vi.fn()
       }
     };
     global.fetch = vi.fn().mockResolvedValue({ ok: true });
@@ -38,22 +35,41 @@ describe('browser extension options', () => {
     delete global.fetch;
   });
 
-  it('loads the saved settings and persists updates', async () => {
+  it('loads saved settings from local (not sync) storage', async () => {
     document.dispatchEvent(new Event('DOMContentLoaded'));
     await flush();
 
-    expect(document.getElementById('apiBase').value).toBe('http://localhost:3001');
-    expect(document.getElementById('connected-sites').textContent).toContain('AppSumo');
+    expect(chrome.storage.local.get).toHaveBeenCalled();
+    expect(document.getElementById('apiBase').value).toBe('http://127.0.0.1:18765');
+    expect(document.getElementById('apiToken').value).toBe('stored-token');
+  });
 
-    document.getElementById('apiBase').value = 'http://localhost:4000';
+  it('saves the pasted token to local storage on submit', async () => {
+    document.dispatchEvent(new Event('DOMContentLoaded'));
+    await flush();
+
+    document.getElementById('apiBase').value = 'http://127.0.0.1:18765';
+    document.getElementById('apiToken').value = 'new-token';
     document.getElementById('settings-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     await flush();
 
-    expect(chrome.storage.sync.set).toHaveBeenCalledWith({
-      apiBase: 'http://localhost:4000',
+    expect(chrome.storage.local.set).toHaveBeenCalledWith({
+      apiBase: 'http://127.0.0.1:18765',
+      apiToken: 'new-token',
       autoSync: true,
       notifyOnNewLicenses: true
     });
+  });
+
+  it('clears the token from local storage', async () => {
+    document.dispatchEvent(new Event('DOMContentLoaded'));
+    await flush();
+
+    document.getElementById('clear-token-button').click();
+    await flush();
+
+    expect(chrome.storage.local.remove).toHaveBeenCalledWith('apiToken');
+    expect(document.getElementById('apiToken').value).toBe('');
   });
 
   it('tests the backend connection from the options page', async () => {
@@ -63,7 +79,7 @@ describe('browser extension options', () => {
     document.getElementById('test-connection').click();
     await flush();
 
-    expect(fetch).toHaveBeenCalledWith('http://localhost:3001/api/health');
+    expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:18765/api/health');
     expect(document.getElementById('status').textContent).toContain('Connection successful');
   });
 });

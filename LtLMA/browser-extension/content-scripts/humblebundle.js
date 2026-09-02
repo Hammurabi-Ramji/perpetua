@@ -2,19 +2,26 @@
 
 class HumbleBundleExtractor {
   constructor() {
+    this.pending = [];
+    this.syncTimeout = null;
     this.init();
   }
 
   init() {
-    // Check if we're on a Humble Bundle product page
-    if (globalThis.location.hostname === 'www.humblebundle.com' && globalThis.location.pathname.includes('/downloads')) {
+    // NOTE: manifest.json injects this script on /library* and
+    // /home/library* URLs — the pathname check below matches that, not the
+    // old /downloads path this extractor never actually saw in practice.
+    if (globalThis.location.hostname === 'www.humblebundle.com' && globalThis.location.pathname.includes('/library')) {
       this.setupObserver();
       this.extractInitialLicenses();
     }
+
+    chrome.runtime.onMessage.addListener((request) => {
+      if (request.action === 'requestSync') this.extractLicensesFromNode(document.body);
+    });
   }
 
   setupObserver() {
-    // Watch for dynamic content changes
     const observer = new MutationObserver((mutations) => {
       mutations.forEach((mutation) => {
         if (mutation.type === 'childList') {
@@ -30,84 +37,85 @@ class HumbleBundleExtractor {
   }
 
   extractInitialLicenses() {
-    // Extract licenses from initial page load
     this.extractLicensesFromNode(document.body);
   }
 
   extractLicensesFromNode(node) {
     const licenses = [];
 
-    // Look for license keys in text content
     const textNodes = this.getTextNodes(node);
     textNodes.forEach(textNode => {
       const found = globalThis.LicenseVaultExtractors.extractLicensePatterns(textNode.textContent);
       if (found.keys.length > 0) {
         found.keys.forEach(key => {
           licenses.push({
-            productName: globalThis.LicenseVaultExtractors.extractProductName(node.closest('.game-download') || node) || 'Humble Bundle Game',
-            licenseKey: key,
-            source: 'humblebundle',
-            extractedAt: new Date().toISOString()
+            product_name: globalThis.LicenseVaultExtractors.extractProductName(node.closest('.game-download') || node) || 'Humble Bundle Game',
+            license_key: key,
           });
         });
       }
     });
 
-    // Look for license keys in input fields and code blocks
     const inputs = node.querySelectorAll('input[type="text"], input[type="password"], textarea, code, pre');
     inputs.forEach(input => {
       const found = globalThis.LicenseVaultExtractors.extractLicensePatterns(input.value || input.textContent);
       if (found.keys.length > 0) {
         found.keys.forEach(key => {
           licenses.push({
-            productName: globalThis.LicenseVaultExtractors.extractProductName(node.closest('.game-download') || node) || 'Humble Bundle Game',
-            licenseKey: key,
-            source: 'humblebundle',
-            extractedAt: new Date().toISOString()
+            product_name: globalThis.LicenseVaultExtractors.extractProductName(node.closest('.game-download') || node) || 'Humble Bundle Game',
+            license_key: key,
           });
         });
       }
     });
 
-    // Look for Humble Bundle specific license elements
     const licenseElements = node.querySelectorAll('.keyfield, .redeem-code, .serial-number, [data-key]');
     licenseElements.forEach(element => {
       const found = globalThis.LicenseVaultExtractors.extractLicensePatterns(element.textContent);
       if (found.keys.length > 0) {
         found.keys.forEach(key => {
           licenses.push({
-            productName: globalThis.LicenseVaultExtractors.extractProductName(element.closest('.game-download') || element) || 'Humble Bundle Game',
-            licenseKey: key,
-            source: 'humblebundle',
-            extractedAt: new Date().toISOString()
+            product_name: globalThis.LicenseVaultExtractors.extractProductName(element.closest('.game-download') || element) || 'Humble Bundle Game',
+            license_key: key,
           });
         });
       }
     });
 
-    // Look for license keys in download sections
     const downloadSections = node.querySelectorAll('.download-section, .game-download, .software-download');
     downloadSections.forEach(section => {
       const found = globalThis.LicenseVaultExtractors.extractLicensePatterns(section.textContent);
       if (found.keys.length > 0) {
         found.keys.forEach(key => {
           licenses.push({
-            productName: globalThis.LicenseVaultExtractors.extractProductName(section) || 'Humble Bundle Game',
-            licenseKey: key,
-            source: 'humblebundle',
-            extractedAt: new Date().toISOString()
+            product_name: globalThis.LicenseVaultExtractors.extractProductName(section) || 'Humble Bundle Game',
+            license_key: key,
           });
         });
       }
     });
 
-    // Send found licenses to background script
-    if (licenses.length > 0) {
-      chrome.runtime.sendMessage({
-        action: 'licensesFound',
-        licenses: licenses,
-        source: 'humblebundle'
-      });
+    if (licenses.length > 0) this.queueSync(licenses);
+  }
+
+  queueSync(licenses) {
+    this.pending.push(...licenses);
+    clearTimeout(this.syncTimeout);
+    this.syncTimeout = setTimeout(() => this.flush(), 1500);
+  }
+
+  async flush() {
+    if (this.pending.length === 0) return;
+    const licenses = this.pending;
+    this.pending = [];
+
+    try {
+      const result = await chrome.runtime.sendMessage({ action: 'licensesScraped', site: 'humblebundle', licenses });
+      if (!result || !result.ok) {
+        console.error('Perpetua: sync failed', result && result.error);
+      }
+    } catch (err) {
+      console.error('Perpetua: sync failed', err);
     }
   }
 

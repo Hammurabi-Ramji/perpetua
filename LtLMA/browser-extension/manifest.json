@@ -1,18 +1,15 @@
 {
   "manifest_version": 3,
-  "name": "LicenseVault",
-  "version": "1.0.0",
-  "description": "Automatically sync lifetime licenses from AppSumo, Product Hunt, and more",
+  "name": "Perpetua Companion",
+  "version": "0.1.0",
+  "description": "Sync lifetime-deal licenses from AppSumo, Product Hunt, StackSocial, and Humble Bundle into your local Perpetua vault",
   "permissions": [
     "storage",
     "activeTab",
-    "scripting",
-    "identity",
-    "alarms"
+    "scripting"
   ],
   "host_permissions": [
-    "http://localhost:3001/*",
-    "https://licensevault.app/*",
+    "http://127.0.0.1:18765/*",
     "*://appsumo.com/*",
     "*://www.producthunt.com/*",
     "*://www.stacksocial.com/*",
@@ -40,11 +37,6 @@
     {
       "matches": ["*://www.humblebundle.com/library*", "*://www.humblebundle.com/home/library*"],
       "js": ["lib/extractors.js", "content-scripts/humblebundle.js"],
-      "run_at": "document_idle"
-    },
-    {
-      "matches": ["<all_urls>"],
-      "js": ["content-scripts/license-detector.js"],
       "run_at": "document_idle"
     }
   ],

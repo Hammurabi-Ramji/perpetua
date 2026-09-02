@@ -2,19 +2,23 @@
 
 class StackSocialExtractor {
   constructor() {
+    this.pending = [];
+    this.syncTimeout = null;
     this.init();
   }
 
   init() {
-    // Check if we're on a StackSocial product page
-    if (globalThis.location.hostname === 'stacksocial.com' && globalThis.location.pathname.includes('/deals/')) {
+    if (globalThis.location.hostname === 'www.stacksocial.com' && globalThis.location.pathname.includes('/account/')) {
       this.setupObserver();
       this.extractInitialLicenses();
     }
+
+    chrome.runtime.onMessage.addListener((request) => {
+      if (request.action === 'requestSync') this.extractLicensesFromNode(document.body);
+    });
   }
 
   setupObserver() {
-    // Watch for dynamic content changes
     const observer = new MutationObserver((mutations) => {
       mutations.forEach((mutation) => {
         if (mutation.type === 'childList') {
@@ -30,68 +34,72 @@ class StackSocialExtractor {
   }
 
   extractInitialLicenses() {
-    // Extract licenses from initial page load
     this.extractLicensesFromNode(document.body);
   }
 
   extractLicensesFromNode(node) {
     const licenses = [];
 
-    // Look for license keys in text content
     const textNodes = this.getTextNodes(node);
     textNodes.forEach(textNode => {
       const found = globalThis.LicenseVaultExtractors.extractLicensePatterns(textNode.textContent);
       if (found.keys.length > 0) {
         found.keys.forEach(key => {
           licenses.push({
-            productName: globalThis.LicenseVaultExtractors.extractProductName(node.closest('.deal-container') || node) || 'StackSocial Deal',
-            licenseKey: key,
-            source: 'stacksocial',
-            extractedAt: new Date().toISOString()
+            product_name: globalThis.LicenseVaultExtractors.extractProductName(node.closest('.deal-container') || node) || 'StackSocial Deal',
+            license_key: key,
           });
         });
       }
     });
 
-    // Look for license keys in input fields and code blocks
     const inputs = node.querySelectorAll('input[type="text"], input[type="password"], textarea, code, pre');
     inputs.forEach(input => {
       const found = globalThis.LicenseVaultExtractors.extractLicensePatterns(input.value || input.textContent);
       if (found.keys.length > 0) {
         found.keys.forEach(key => {
           licenses.push({
-            productName: globalThis.LicenseVaultExtractors.extractProductName(node.closest('.deal-container') || node) || 'StackSocial Deal',
-            licenseKey: key,
-            source: 'stacksocial',
-            extractedAt: new Date().toISOString()
+            product_name: globalThis.LicenseVaultExtractors.extractProductName(node.closest('.deal-container') || node) || 'StackSocial Deal',
+            license_key: key,
           });
         });
       }
     });
 
-    // Look for license keys in StackSocial-specific elements
     const licenseElements = node.querySelectorAll('.license-key, .serial-key, .activation-code, [data-license]');
     licenseElements.forEach(element => {
       const found = globalThis.LicenseVaultExtractors.extractLicensePatterns(element.textContent);
       if (found.keys.length > 0) {
         found.keys.forEach(key => {
           licenses.push({
-            productName: globalThis.LicenseVaultExtractors.extractProductName(element.closest('.deal-container') || element) || 'StackSocial Deal',
-            licenseKey: key,
-            source: 'stacksocial',
-            extractedAt: new Date().toISOString()
+            product_name: globalThis.LicenseVaultExtractors.extractProductName(element.closest('.deal-container') || element) || 'StackSocial Deal',
+            license_key: key,
           });
         });
       }
     });
 
-    // Send found licenses to background script
-    if (licenses.length > 0) {
-      chrome.runtime.sendMessage({
-        action: 'licensesFound',
-        licenses: licenses,
-        source: 'stacksocial'
-      });
+    if (licenses.length > 0) this.queueSync(licenses);
+  }
+
+  queueSync(licenses) {
+    this.pending.push(...licenses);
+    clearTimeout(this.syncTimeout);
+    this.syncTimeout = setTimeout(() => this.flush(), 1500);
+  }
+
+  async flush() {
+    if (this.pending.length === 0) return;
+    const licenses = this.pending;
+    this.pending = [];
+
+    try {
+      const result = await chrome.runtime.sendMessage({ action: 'licensesScraped', site: 'stacksocial', licenses });
+      if (!result || !result.ok) {
+        console.error('Perpetua: sync failed', result && result.error);
+      }
+    } catch (err) {
+      console.error('Perpetua: sync failed', err);
     }
   }
 

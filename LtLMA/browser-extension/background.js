@@ -1,167 +1,112 @@
-// background.js
-chrome.runtime.onInstalled.addListener(() => {
-  console.log('LicenseVault Extension Installed');
+// background.js — the only place network calls to Perpetua happen. Content
+// scripts extract data and message this worker; they never fetch directly.
 
-  // Set up periodic sync alarm
-  chrome.alarms.create('sync-licenses', { periodInMinutes: 60 });
+importScripts('lib/api.js');
 
-  // Initialize storage defaults
-  chrome.storage.sync.set({
-    apiBase: 'http://localhost:3001',
-    autoSync: true,
-    notifyOnNewLicenses: true
+const SITE_HOSTS = {
+  appsumo: 'appsumo.com',
+  producthunt: 'www.producthunt.com',
+  stacksocial: 'www.stacksocial.com',
+  humblebundle: 'www.humblebundle.com',
+};
+
+chrome.runtime.onInstalled.addListener(async () => {
+  const existing = await chrome.storage.local.get(['apiBase', 'autoSync', 'notifyOnNewLicenses']);
+  await chrome.storage.local.set({
+    apiBase: existing.apiBase || 'http://127.0.0.1:18765',
+    autoSync: existing.autoSync !== false,
+    notifyOnNewLicenses: existing.notifyOnNewLicenses !== false,
   });
 });
 
-// Handle alarms
-chrome.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name === 'sync-licenses') {
-    // Check all connected sites for updates
-    const { connectedSites } = await chrome.storage.sync.get('connectedSites');
-    if (connectedSites) {
-      for (const site of connectedSites) {
-        // Trigger sync by messaging content script
-        const tabs = await chrome.tabs.query({ url: `*://${site.domain}/*` });
-        for (const tab of tabs) {
-          chrome.tabs.sendMessage(tab.id, { action: 'requestSync' });
-        }
-      }
-    }
-  }
-});
-
-// Handle messages from content scripts and popup
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  switch (request.action) {
-    case 'getLicenses':
-      getStoredLicenses().then(sendResponse);
-      return true; // Async response
-
-    case 'manualSync':
-      triggerManualSync(request.site).then(sendResponse);
-      return true;
-
-    case 'openHomePage':
-      chrome.tabs.create({ url: 'http://localhost:5173' });
-      break;
-
-    case 'captureScreenshot':
-      chrome.tabs.captureVisibleTab(sender.tab.windowId, { format: 'png' })
-        .then(sendResponse);
-      return true;
-  }
-});
-
-// Context menu for right-click "Add to LicenseVault"
-chrome.contextMenus.create({
-  id: 'add-to-vault',
-  title: 'Add License to LicenseVault',
-  contexts: ['selection']
-});
-
-chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  const selectedText = info.selectionText;
-
-  // Parse selected text as license data
-  const license = parseSelectedText(selectedText);
-
-  // Send to API
-  await fetch('http://localhost:3001/api/licenses/manual', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${await getStoredToken()}`
-    },
-    body: JSON.stringify(license)
-  });
-
-  // Show confirmation
+async function maybeNotify(message, type = 'success') {
+  const { notifyOnNewLicenses } = await chrome.storage.local.get('notifyOnNewLicenses');
+  if (notifyOnNewLicenses === false) return;
   chrome.notifications.create({
     type: 'basic',
     iconUrl: 'icons/icon128.png',
-    title: 'LicenseVault',
-    message: 'License added successfully'
+    title: 'Perpetua',
+    message: type === 'error' ? `⚠️ ${message}` : message,
   });
-});
-
-async function getStoredLicenses() {
-  const { licenses } = await chrome.storage.local.get('licenses');
-  return licenses || [];
 }
 
-async function getStoredToken() {
-  const { jwtToken } = await chrome.storage.sync.get('jwtToken');
-  return jwtToken;
+// Normalizes a scraped license (which may come in with camelCase fields from
+// older content-script code paths) into Perpetua's LicensePayload shape, and
+// drops anything missing the two required fields — sending even one such row
+// to /api/vault/import would fail the *entire* batch, since it's parsed and
+// validated as one JSON document server-side, not row by row.
+function normalizeLicense(raw, site) {
+  const license_key = (raw.license_key ?? raw.licenseKey ?? '').trim();
+  const product_name = (raw.product_name ?? raw.productName ?? '').trim();
+  if (!license_key || !product_name) return null;
+
+  return {
+    product_name,
+    license_key,
+    purchase_date: raw.purchase_date ?? null,
+    status: raw.status ?? 'active',
+    source_site: site,
+    product_url: raw.product_url ?? null,
+    redemption_url: raw.redemption_url ?? null,
+  };
 }
 
-async function triggerManualSync(site) {
+async function handleScraped(site, rawLicenses) {
+  const normalized = (rawLicenses || []).map((raw) => normalizeLicense(raw, site));
+  const valid = normalized.filter(Boolean);
+  const skippedInvalid = normalized.length - valid.length;
+
+  if (valid.length === 0) {
+    return { ok: true, imported: 0, skipped_duplicates: 0, skippedInvalid, total: rawLicenses.length };
+  }
+
   try {
-    // Find tabs for this site
-    const tabs = await chrome.tabs.query({ url: `*://${site}.com/*` });
-
-    for (const tab of tabs) {
-      // Send message to content script
-      chrome.tabs.sendMessage(tab.id, { action: 'requestSync' });
+    const result = await importLicenses(valid);
+    maybeNotify(`Synced ${result.imported} of ${result.total_rows} license(s) from ${site}.`);
+    return { ok: true, ...result, skippedInvalid };
+  } catch (error) {
+    if (error.status === 402) {
+      // The whole batch is rolled back atomically on a free-tier cap hit —
+      // never claim a partial success here.
+      maybeNotify('Sync blocked: free-tier license limit reached. Upgrade Perpetua to Pro to sync more. 0 licenses were saved this batch.', 'error');
+      return { ok: false, error: 'free_limit_reached' };
     }
-
-    return { success: true };
-  } catch (err) {
-    console.error('Manual sync failed:', err);
-    return { success: false, error: err.message };
+    maybeNotify(`Sync failed: ${error.message}`, 'error');
+    return { ok: false, error: error.message };
   }
 }
 
-function parseSelectedText(text) {
-  // Simple parsing for manually selected license text
-  const lines = text.split('\n');
-  const license = {
-    product_name: lines[0] || 'Unknown Product',
-    license_key: '',
-    purchase_date: new Date().toISOString().split('T')[0],
-    status: 'active'
-  };
-
-  // Look for license key patterns
-  const keyPatterns = [
-    /[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}/,
-    /[A-Z0-9]{16,24}/
-  ];
-
-  for (const line of lines) {
-    for (const pattern of keyPatterns) {
-      const match = line.match(pattern);
-      if (match) {
-        license.license_key = match[0];
-        break;
+async function triggerManualSyncAllTabs() {
+  try {
+    for (const host of Object.values(SITE_HOSTS)) {
+      const tabs = await chrome.tabs.query({ url: `*://${host}/*` });
+      for (const tab of tabs) {
+        chrome.tabs.sendMessage(tab.id, { action: 'requestSync' }).catch(() => {});
       }
     }
-    if (license.license_key) break;
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message };
   }
-
-  return license;
 }
 
-// Handle OAuth callback
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  if (changeInfo.url && changeInfo.url.includes('/auth/callback')) {
-    // Extract token from URL
-    const url = new URL(changeInfo.url);
-    const token = url.searchParams.get('token');
+chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
+  switch (request.action) {
+    case 'licensesScraped':
+      handleScraped(request.site, request.licenses).then(sendResponse);
+      return true;
 
-    if (token) {
-      // Store token
-      await chrome.storage.sync.set({ jwtToken: token });
+    case 'getLicenses':
+      getLicenses()
+        .then((licenses) => sendResponse({ ok: true, licenses }))
+        .catch((error) => sendResponse({ ok: false, error: error.message }));
+      return true;
 
-      // Close tab and show success
-      chrome.notifications.create({
-        type: 'basic',
-        iconUrl: 'icons/icon128.png',
-        title: 'LicenseVault',
-        message: 'Successfully signed in!'
-      });
+    case 'manualSyncAll':
+      triggerManualSyncAllTabs().then(sendResponse);
+      return true;
 
-      // Close the auth tab
-      chrome.tabs.remove(tabId);
-    }
+    default:
+      return false;
   }
 });
