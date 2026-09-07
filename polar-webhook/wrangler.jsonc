@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "perpetua-polar-webhook",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    // Fill in with the real id from the "Early Bird — First 100" discount's
+    // own URL in the Polar dashboard before deploying. Not secret — it's
+    // just an identifier, safe to commit.
+    "EARLY_BIRD_DISCOUNT_ID": ""
+  }
+  // No routes/custom domain configured yet. Deploy first to the default
+  // *.workers.dev URL, confirm it verifies real Polar events, then attach
+  // a custom domain (e.g. hooks.hammurabi.click) once DNS for that zone
+  // is manageable from Cloudflare.
+}
