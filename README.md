@@ -1,52 +1,78 @@
-# PERPETUA
+# Perpetua
 
 Local-first lifetime license manager.
 
-**Perpetua** — [`LtLMA/`](./LtLMA/) — Desktop app (Tauri 2 + SvelteKit + Rust/Axum + SQLite), plus a companion browser extension ([`LtLMA/browser-extension/`](./LtLMA/browser-extension/)) that captures license purchases from deal sites straight into your local vault. Pro unlocks encrypted cloud backup/restore to your own WebDAV storage, so a lost machine doesn't mean a lost vault.
+Perpetua is a desktop vault for the lifetime software licenses you buy on
+deal sites: it stores the keys locally, reminds you before a vendor's
+keep-alive window lapses, and (on Pro) backs the vault up encrypted to your
+own WebDAV storage. A companion browser extension captures purchases from
+AppSumo, Product Hunt, StackSocial and Humble Bundle straight into the vault.
 
-**Version:** 1.0.0 (`LtLMA/`)
+**Version:** 1.0.0 · **License:** proprietary, see [`LICENSE`](./LICENSE)
+
+## Repository layout
+
+| Path | What it is |
+|------|------------|
+| [`desktop/`](./desktop/) | The Perpetua desktop app — Tauri 2 shell, SvelteKit UI, Rust/Axum local API on `127.0.0.1:18765`, SQLite vault. Ships as MSI/NSIS (Windows), DMG (macOS), deb/rpm/AppImage (Linux). |
+| [`browser-extension/`](./browser-extension/) | Manifest V3 companion extension (Chrome/Edge). Talks only to the local API. |
+| [`polar-webhook/`](./polar-webhook/) | Cloudflare Worker that receives Polar.sh order webhooks (purchase side of Pro). |
+| [`docs/`](./docs/) | Repository-level docs: [`REMAINING_TASKS.md`](./docs/REMAINING_TASKS.md) is the owner/engineering backlog. `docs/internal/` (git-ignored) holds audit and pricing working papers. |
+| [`.github/workflows/`](./.github/workflows/) | [`perpetua-ci.yml`](./.github/workflows/perpetua-ci.yml) quality gates; [`release.yml`](./.github/workflows/release.yml) tagged multi-OS release builds. |
+
+Component-level READMEs: [`desktop/README.md`](./desktop/README.md) ·
+[`browser-extension/README.md`](./browser-extension/README.md) ·
+[`polar-webhook/README.md`](./polar-webhook/README.md)
 
 ## Quick start
 
 ```powershell
-cd LtLMA
+cd desktop
 npm ci
 npm run tauri dev
 ```
 
+Requires Node 22+, a stable Rust toolchain and the
+[Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS.
+
 ### Release build
 
 ```powershell
-cd LtLMA
+cd desktop
 npm ci
-.\build-release.ps1
+.\build-release.ps1          # needs PERPETUA_LICENSE_SECRET; bakes in Polar activation
 ```
 
-Produces `perpetua.exe` plus MSI/NSIS under `LtLMA\src-tauri\target\release\`.
-Details: [`LtLMA/docs/RELEASE.md`](./LtLMA/docs/RELEASE.md) · smoke: [`LtLMA/docs/SMOKE_TEST.md`](./LtLMA/docs/SMOKE_TEST.md)
+Produces `perpetua.exe` plus MSI/NSIS under `desktop\src-tauri\target\release\`.
+Details: [`desktop/docs/RELEASE.md`](./desktop/docs/RELEASE.md) ·
+smoke: [`desktop/docs/SMOKE_TEST.md`](./desktop/docs/SMOKE_TEST.md) ·
+clean-machine install: [`desktop/docs/INSTALL_SMOKE.md`](./desktop/docs/INSTALL_SMOKE.md)
 
-### Using Perpetua
+### Tests
 
-- [`LtLMA/docs/USER_GUIDE.md`](./LtLMA/docs/USER_GUIDE.md) — features, walkthroughs
-- [`LtLMA/docs/TROUBLESHOOTING.md`](./LtLMA/docs/TROUBLESHOOTING.md) — common issues
-- [`LtLMA/docs/STATUS.md`](./LtLMA/docs/STATUS.md) — what works, what doesn't yet, what's next
+```powershell
+cd desktop;           npm test; npm run check; cd src-tauri; cargo test; cd ..\..
+cd browser-extension; npm test; cd ..
+cd polar-webhook;     npm test; npm run typecheck; cd ..
+```
+
+## Using Perpetua
+
+- [`desktop/docs/USER_GUIDE.md`](./desktop/docs/USER_GUIDE.md) — features, walkthroughs
+- [`desktop/docs/TROUBLESHOOTING.md`](./desktop/docs/TROUBLESHOOTING.md) — common issues
+- [`desktop/docs/STATUS.md`](./desktop/docs/STATUS.md) — what works, what doesn't yet, what's next
+- Support: `support@hammurabi.click` ([`desktop/legal/SUPPORT.md`](./desktop/legal/SUPPORT.md))
 
 ## Legal
 
-- Root [`LICENSE`](./LICENSE) — proprietary commercial terms
-- Product pack: [`LtLMA/legal/`](./LtLMA/legal/) — Privacy, Terms/EULA, Support
-
-## CI
-
-- Quality gates: [`.github/workflows/perpetua-ci.yml`](./.github/workflows/perpetua-ci.yml)
-- Release builds: [`.github/workflows/release.yml`](./.github/workflows/release.yml)
+- [`LICENSE`](./LICENSE) — proprietary commercial terms (applies to the whole repository)
+- [`desktop/legal/`](./desktop/legal/) — Privacy, Terms/EULA, Support — the product pack shipped with the app
 
 ## Hygiene
 
-- `oracleJdk-26/` is **not** product code; exclude from distribution archives.
-- Local `*.db` / `.env*` may contain secrets — do not publish.
-
-## Status
-
-See [`LtLMA/docs/STATUS.md`](./LtLMA/docs/STATUS.md) for what works, what
-doesn't yet, and what's next as of the current release.
+- Secrets never live in the tree: `.env*` (except `.env.example`), `*.db` and
+  `docs/internal/` are git-ignored. Build-time secrets come from repository
+  secrets (`PERPETUA_LICENSE_SECRET`, `POLAR_ORGANIZATION_ID`); see
+  [`desktop/.env.example`](./desktop/.env.example) for the public commerce vars.
+- Anything else sitting next to this file that is not listed in the layout
+  table above is local scratch and must not be shipped or committed.

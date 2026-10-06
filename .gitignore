@@ -7,22 +7,23 @@ sessions.db
 
 # Dependencies & build outputs
 node_modules/
-LtLMA/node_modules/
-LtLMA/browser-extension/node_modules/
-LtLMA/src-tauri/target/
-LtLMA/build/
-LtLMA/.svelte-kit/
+desktop/node_modules/
+desktop/src-tauri/target/
+desktop/build/
+desktop/.svelte-kit/
+browser-extension/node_modules/
+polar-webhook/node_modules/
 dist/
 .vite/
 test-results/
 playwright-report/
 
-# Non-product toolchain (do not ship)
+# Local scratch that is not part of the product (never ship or commit)
 oracleJdk-26/
+LtLM/
 
-# Internal audit/process docs — not for the public repo
-/PROJECT-STATUS-AUDIT.md
-/SSOT.md
+# Internal audit / pricing / process working papers — not for the public repo
+docs/internal/
 
 # OS noise
 desktop.ini

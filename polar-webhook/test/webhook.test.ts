@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import worker from "../src/index.ts";
+import worker, { eventSummary } from "../src/index.ts";
 
 const SECRET = "whsec_dGVzdHNlY3JldGtleWZvcmxvY2FsdGVzdGluZw==";
 
@@ -75,6 +75,97 @@ test("discount-count returns 502 if Polar's API errors", async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("discount-count returns 502 (not an unhandled rejection) when fetch itself throws", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    throw new TypeError("fetch failed");
+  }) as typeof fetch;
+
+  try {
+    const res = await worker.fetch(new Request("https://example.com/discount-count"), env);
+    assert.equal(res.status, 502);
+    assert.equal(res.headers.get("Access-Control-Allow-Origin"), "https://perpetua.hammurabi.click");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("discount-count returns 502 on a malformed Polar body and when unconfigured", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response("not json", { status: 200 })) as typeof fetch;
+  try {
+    const malformed = await worker.fetch(new Request("https://example.com/discount-count"), env);
+    assert.equal(malformed.status, 502);
+
+    let called = false;
+    globalThis.fetch = (async () => {
+      called = true;
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    const unconfigured = await worker.fetch(
+      new Request("https://example.com/discount-count"),
+      { ...env, EARLY_BIRD_DISCOUNT_ID: "" },
+    );
+    assert.equal(unconfigured.status, 502);
+    assert.equal(called, false, "must not call Polar with an empty discount id");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("webhook logging keeps identifiers and drops buyer PII", async () => {
+  const logged: string[] = [];
+  const originalLog = console.log;
+  console.log = (...args: unknown[]) => {
+    logged.push(args.map(String).join(" "));
+  };
+
+  const body = JSON.stringify({
+    type: "order.paid",
+    data: {
+      id: "order_pii",
+      status: "paid",
+      amount: 4999,
+      currency: "usd",
+      customer: { id: "cust_42", email: "buyer@example.com", name: "Jane Buyer" },
+      billing_address: { line1: "1 Main St", city: "Springfield" },
+      product: { id: "prod_1", name: "Perpetua Pro" },
+    },
+  });
+  const id = "msg_pii";
+  const timestamp = Math.floor(Date.now() / 1000);
+  const signature = await sign(id, timestamp, body, SECRET);
+
+  try {
+    const res = await worker.fetch(
+      request(body, {
+        "webhook-id": id,
+        "webhook-timestamp": String(timestamp),
+        "webhook-signature": signature,
+      }),
+      env,
+    );
+    assert.equal(res.status, 202);
+  } finally {
+    console.log = originalLog;
+  }
+
+  const line = logged.find((entry) => entry.includes("order.paid"));
+  assert.ok(line, "handled event should be logged");
+  assert.match(line, /order_pii/);
+  assert.match(line, /cust_42/);
+  assert.match(line, /prod_1/);
+  assert.doesNotMatch(line, /buyer@example\.com/);
+  assert.doesNotMatch(line, /Jane Buyer/);
+  assert.doesNotMatch(line, /Main St/);
+});
+
+test("eventSummary tolerates non-object payloads", () => {
+  assert.deepEqual(eventSummary(null), {});
+  assert.deepEqual(eventSummary("string"), {});
+  assert.deepEqual(eventSummary({ id: "x", email: "a@b.c" }), { id: "x" });
 });
 
 test("OPTIONS preflight returns CORS headers", async () => {
@@ -189,4 +280,24 @@ test("rejects non-POST requests", async () => {
     env,
   );
   assert.equal(res.status, 405);
+});
+
+test("discount-count honors POLAR_API_BASE (sandbox / local mock) and trims trailing slashes", async () => {
+  const originalFetch = globalThis.fetch;
+  let capturedUrl = "";
+  globalThis.fetch = (async (url: string) => {
+    capturedUrl = String(url);
+    return new Response(JSON.stringify({ redemptions_count: 100, max_redemptions: 100 }), { status: 200 });
+  }) as typeof fetch;
+
+  try {
+    const res = await worker.fetch(
+      new Request("https://example.com/discount-count"),
+      { ...env, POLAR_API_BASE: "https://sandbox-api.polar.sh/" },
+    );
+    assert.equal(capturedUrl, "https://sandbox-api.polar.sh/v1/discounts/discount_123");
+    assert.deepEqual(await res.json(), { claimed: 100, total: 100 });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

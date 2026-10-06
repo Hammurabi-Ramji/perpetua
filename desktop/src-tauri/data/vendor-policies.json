@@ -1,0 +1,77 @@
+{
+  "version": 2,
+  "updated": "2026-10-06",
+  "notes": "Keep-alive Phase 1 dataset. IMPORTANT: marketplaces (AppSumo, StackSocial) were checked 2026-10-06 and publish no inactivity requirement; inactivity rules are set by each software vendor. Marketplace entries therefore carry Perpetua's conservative default reminder window, not a marketplace policy. Verify with the product vendor. confidence: high = vendor-published number; medium = vendor-published but ambiguous; low = Perpetua default / unverified.",
+  "policies": [
+    {
+      "id": "appsumo",
+      "vendor": "AppSumo",
+      "aliases": ["appsumo", "app sumo", "sumo"],
+      "product_hints": [],
+      "keepalive_days": 90,
+      "source": "AppSumo Terms of Use (modified 2025-02-11): no inactivity requirement; partners set their own policies (60-day typical refund window). 90 days is a Perpetua default reminder.",
+      "last_verified": "2026-10-06",
+      "confidence": "low"
+    },
+    {
+      "id": "stacksocial",
+      "vendor": "StackSocial",
+      "aliases": ["stacksocial", "stack social"],
+      "product_hints": [],
+      "keepalive_days": 90,
+      "source": "StackSocial Terms (updated 2026-04-06): no inactivity requirement; refund and product terms are vendor-specific. 90 days is a Perpetua default reminder.",
+      "last_verified": "2026-10-06",
+      "confidence": "low"
+    },
+    {
+      "id": "humble",
+      "vendor": "Humble Bundle",
+      "aliases": ["humble", "humblebundle", "humble bundle"],
+      "product_hints": [],
+      "keepalive_days": 180,
+      "source": "Conservative default for bundle software accounts",
+      "last_verified": "2026-07-01",
+      "confidence": "low"
+    },
+    {
+      "id": "producthunt",
+      "vendor": "Product Hunt",
+      "aliases": ["producthunt", "product hunt", "ph"],
+      "product_hints": [],
+      "keepalive_days": 90,
+      "source": "Deal / lifetime offer common practice (conservative)",
+      "last_verified": "2026-07-01",
+      "confidence": "low"
+    },
+    {
+      "id": "pitchground",
+      "vendor": "PitchGround",
+      "aliases": ["pitchground", "pitch ground"],
+      "product_hints": [],
+      "keepalive_days": 90,
+      "source": "Marketplace deal inactivity patterns (conservative default)",
+      "last_verified": "2026-07-01",
+      "confidence": "low"
+    },
+    {
+      "id": "dealify",
+      "vendor": "Dealify",
+      "aliases": ["dealify"],
+      "product_hints": [],
+      "keepalive_days": 90,
+      "source": "Marketplace deal inactivity patterns (conservative default)",
+      "last_verified": "2026-07-01",
+      "confidence": "low"
+    },
+    {
+      "id": "generic-saas-90",
+      "vendor": "Typical SaaS lifetime deal",
+      "aliases": ["lifetime", "ltd", "saas"],
+      "product_hints": ["lifetime", "ltd"],
+      "keepalive_days": 90,
+      "source": "Industry rule-of-thumb for LTD keep-alive (fallback)",
+      "last_verified": "2026-07-01",
+      "confidence": "low"
+    }
+  ]
+}
