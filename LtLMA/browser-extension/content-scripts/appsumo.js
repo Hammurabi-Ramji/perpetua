@@ -9,6 +9,25 @@
   const SITE = 'appsumo';
   let syncInProgress = false;
 
+  // Server requires YYYY-MM-DD for purchase_date; null when unparseable.
+  function toDateOnly(value) {
+    if (value === null || value === undefined) return null;
+    const text = String(value).trim();
+    if (!text) return null;
+    const m = /^(\d{4})-(\d{2})-(\d{2})(?:$|[T ])/.exec(text);
+    let y, mo, d;
+    if (m) {
+      y = +m[1]; mo = +m[2]; d = +m[3];
+    } else {
+      const dt = new Date(text);
+      if (Number.isNaN(dt.getTime())) return null;
+      y = dt.getFullYear(); mo = dt.getMonth() + 1; d = dt.getDate();
+    }
+    const check = new Date(Date.UTC(y, mo - 1, d));
+    if (y < 1000 || check.getUTCFullYear() !== y || check.getUTCMonth() !== mo - 1 || check.getUTCDate() !== d) return null;
+    return `${String(y).padStart(4, '0')}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  }
+
   async function extractLicenses() {
     const licenses = [];
 
@@ -55,7 +74,7 @@
 
         licenses.push({
           product_name: productName,
-          purchase_date: purchaseDate ? new Date(purchaseDate).toISOString() : null,
+          purchase_date: toDateOnly(purchaseDate),
           redemption_url: redemptionUrl || null,
           license_key: licenseKey || null,
           status,
