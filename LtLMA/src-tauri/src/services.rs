@@ -392,6 +392,35 @@ fn set_app_state(conn: &Connection, key: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+/// Per-install launch-at-login preference. Absent or anything but "1" means off.
+pub fn get_autostart_enabled(conn: &Connection) -> Result<bool> {
+    Ok(get_app_state(conn, "autostart")?.as_deref() == Some("1"))
+}
+
+pub fn set_autostart_enabled(conn: &Connection, enabled: bool) -> Result<()> {
+    set_app_state(conn, "autostart", if enabled { "1" } else { "0" })
+}
+
+#[cfg(test)]
+mod autostart_tests {
+    use super::*;
+
+    #[test]
+    fn autostart_defaults_off_and_round_trips() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute(
+            "CREATE TABLE app_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+            [],
+        )
+        .unwrap();
+        assert!(!get_autostart_enabled(&conn).unwrap());
+        set_autostart_enabled(&conn, true).unwrap();
+        assert!(get_autostart_enabled(&conn).unwrap());
+        set_autostart_enabled(&conn, false).unwrap();
+        assert!(!get_autostart_enabled(&conn).unwrap());
+    }
+}
+
 pub fn count_licenses(conn: &Connection, user_id: i64) -> Result<usize> {
     let mut stmt = conn.prepare("SELECT COUNT(*) FROM licenses WHERE user_id = ?")?;
     let count: i64 = stmt.query_row(params![user_id], |row| row.get(0))?;

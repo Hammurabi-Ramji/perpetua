@@ -196,6 +196,17 @@ export function getLicenseStats() {
   return request<LicenseStats>("/licenses/stats");
 }
 
+export function getAutostart() {
+  return request<{ enabled: boolean }>("/settings/autostart");
+}
+
+export function setAutostart(enabled: boolean) {
+  return request<{ enabled: boolean }>("/settings/autostart", {
+    method: "POST",
+    body: JSON.stringify({ enabled }),
+  });
+}
+
 export function getEntitlement() {
   return request<Entitlement>("/entitlement");
 }

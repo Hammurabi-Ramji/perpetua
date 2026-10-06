@@ -16,6 +16,7 @@ On your device, Perpetua may store:
 - Local account credentials (passwords hashed with bcrypt; not recoverable)
 - License records you enter or import (keys, URLs, notes, keep-alive dates)
 - Reminder preferences and local notification dedupe state
+- An optional launch-at-login setting (off by default; you can turn it on or off in Reminders)
 - SQLite database files and rotated local backups
 
 **Storage location:** the operating system application data directory for

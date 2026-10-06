@@ -3,6 +3,8 @@
 
 	import {
 		getAccountRecovery,
+		getAutostart,
+		setAutostart,
 		getReminderSettings,
 		inviteMember,
 		listReminderItems,
@@ -145,7 +147,25 @@
 		}
 	}
 
-	onMount(loadSettings);
+	let autostart = false;
+	async function toggleAutostart() {
+		const wanted = autostart;
+		try {
+			const res = await setAutostart(wanted);
+			autostart = res.enabled;
+		} catch {
+			autostart = !wanted;
+		}
+	}
+
+	onMount(async () => {
+		try {
+			autostart = (await getAutostart()).enabled;
+		} catch {
+			/* leave off */
+		}
+		await loadSettings();
+	});
 </script>
 
 <svelte:head>
@@ -233,6 +253,12 @@
 			</label>
 
 			<p class="muted small">Email reminders are not available yet.</p>
+
+			<label class="checkbox">
+				<input type="checkbox" bind:checked={autostart} on:change={toggleAutostart} />
+				<span>Start Perpetua when I sign in to this computer</span>
+			</label>
+			<p class="muted small">Perpetua then runs in the system tray and keeps checking reminders.</p>
 
 			<label class="checkbox">
 				<input bind:checked={settings.browser_notifications} type="checkbox" />

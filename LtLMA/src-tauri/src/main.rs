@@ -138,11 +138,36 @@ fn main() {
                 api::start_server(app_state.db.clone(), app_state.jwt_secret.clone()).await;
             });
 
-            // Launch at login so the background maintainer keeps watch even when
-            // the user isn't actively using the app. Best-effort; ignore errors.
+            // Launch at login is opt-in. The API stores the desired state in
+            // app_state 'autostart'; apply it here every 30s, only on change.
             {
                 use tauri_plugin_autostart::ManagerExt;
-                let _ = app.autolaunch().enable();
+                let handle = app.handle().clone();
+                let db = app.state::<AppState>().inner().db.clone();
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        let wanted = {
+                            let conn = db.lock().await;
+                            services::get_autostart_enabled(&conn).unwrap_or(false)
+                        };
+                        let manager = handle.autolaunch();
+                        if let Ok(current) = manager.is_enabled() {
+                            if wanted && !current {
+                                let _ = manager.enable();
+                            } else if !wanted && current {
+                                let _ = manager.disable();
+                            }
+                        }
+                        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                    }
+                });
+            }
+
+            // Started by launch-at-login: stay in the tray.
+            if std::env::args().any(|a| a == "--minimized") {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
             }
 
             // System tray so the app can keep running in the background after the

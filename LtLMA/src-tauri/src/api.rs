@@ -27,7 +27,7 @@ use crate::services::{
     list_vault_members, mark_license_active, mark_onboarding_complete, mark_pro_activated,
     prepare_cloud_sync, prepare_invite, prepare_password_reset, prepare_test_email, record_cloud_sync_result,
     redeem_invite, resolve_data_owner_id, restore_vault_from_bytes, update_account_recovery_settings,
-    update_license, update_reminder_settings, validate_credentials, verify_jwt, FreeLimitReached,
+    update_license, update_reminder_settings, get_autostart_enabled, set_autostart_enabled, validate_credentials, verify_jwt, FreeLimitReached,
 };
 use rusqlite::Connection;
 use std::collections::VecDeque;
@@ -114,6 +114,7 @@ pub(crate) fn build_router(db: Arc<Mutex<Connection>>, jwt_secret: Arc<String>) 
         .route("/api/licenses", get(get_user_licenses).post(add_user_license))
         .route("/api/licenses/stats", get(get_user_license_stats))
         .route("/api/entitlement", get(get_entitlement_route))
+        .route("/api/settings/autostart", get(get_autostart_route).post(set_autostart_route))
         .route("/api/activate", post(activate_route))
         .route(
             "/api/licenses/:id",
@@ -683,6 +684,40 @@ async fn get_entitlement_route(
     match get_entitlement(&conn, owner_id) {
         Ok(entitlement) => success(entitlement),
         Err(_) => failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to load entitlement"),
+    }
+}
+
+#[derive(Deserialize)]
+struct AutostartRequest {
+    enabled: bool,
+}
+
+async fn get_autostart_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(error) = authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        return error;
+    }
+    let conn = db.lock().await;
+    match get_autostart_enabled(&conn) {
+        Ok(enabled) => success(json!({ "enabled": enabled })),
+        Err(_) => failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to load setting"),
+    }
+}
+
+async fn set_autostart_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+    Json(payload): Json<AutostartRequest>,
+) -> Response {
+    if let Err(error) = authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        return error;
+    }
+    let conn = db.lock().await;
+    match set_autostart_enabled(&conn, payload.enabled) {
+        Ok(()) => success(json!({ "enabled": payload.enabled })),
+        Err(_) => failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to save setting"),
     }
 }
 
