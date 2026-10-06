@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 
 	import LicenseForm from '$lib/components/LicenseForm.svelte';
 	import { deleteLicense, getLicense, markLicenseActive, updateLicense } from '$lib/api';
@@ -12,6 +12,8 @@
 	let saving = false;
 	let deleting = false;
 	let marking = false;
+	let confirmingDelete = false;
+	let disarmTimer: ReturnType<typeof setTimeout> | null = null;
 	let error: string | null = null;
 	let license: License | null = null;
 	let form: LicenseInput = emptyLicense();
@@ -92,7 +94,21 @@
 		}
 	}
 
+	function disarmDelete() {
+		confirmingDelete = false;
+		if (disarmTimer) {
+			clearTimeout(disarmTimer);
+			disarmTimer = null;
+		}
+	}
+
 	async function removeLicense() {
+		if (!confirmingDelete) {
+			confirmingDelete = true;
+			disarmTimer = setTimeout(disarmDelete, 4000);
+			return;
+		}
+		disarmDelete();
 		deleting = true;
 		error = null;
 		try {
@@ -105,6 +121,7 @@
 	}
 
 	onMount(loadLicense);
+	onDestroy(disarmDelete);
 </script>
 
 <svelte:head>
@@ -151,7 +168,7 @@
 						</button>
 					{/if}
 				<button type="button" class="danger" disabled={deleting} on:click={removeLicense}>
-					{deleting ? 'Deleting...' : 'Delete'}
+					{deleting ? 'Deleting...' : confirmingDelete ? 'Confirm delete?' : 'Delete'}
 				</button>
 			</div>
 		</div>
