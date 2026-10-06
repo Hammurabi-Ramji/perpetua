@@ -67,11 +67,17 @@ fn normalize(value: &str) -> String {
         .trim()
         .to_lowercase()
         .chars()
-        .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+        .map(|c| if c.is_alphanumeric() { c } else { ' ' })
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// True when `needle` appears in `haystack` as whole words (both already
+/// normalized), so the alias "ph" matches "ph" but not "philips".
+fn has_phrase(haystack: &str, needle: &str) -> bool {
+    !needle.is_empty() && format!(" {haystack} ").contains(&format!(" {needle} "))
 }
 
 /// Match against aliases (source_site) first, then product_name hints.
@@ -101,7 +107,9 @@ pub fn suggest_keepalive(
     if !site.is_empty() {
         for policy in &data.policies {
             let aliases: Vec<String> = policy.aliases.iter().map(|a| normalize(a)).collect();
-            if aliases.iter().any(|a| a == &site || site.contains(a) || a.contains(&site))
+            if aliases
+                .iter()
+                .any(|a| has_phrase(&site, a) || (site.len() >= 3 && has_phrase(a, &site)))
                 && policy.id != "generic-saas-90"
             {
                 return suggestion_from(policy, data.version);
@@ -114,7 +122,7 @@ pub fn suggest_keepalive(
         for policy in &data.policies {
             for hint in &policy.product_hints {
                 let h = normalize(hint);
-                if !h.is_empty() && product.contains(&h) {
+                if has_phrase(&product, &h) {
                     return suggestion_from(policy, data.version);
                 }
             }
@@ -192,5 +200,35 @@ mod tests {
         let s = suggest_keepalive(None, Some("Cool LTD Lifetime Suite"));
         assert!(s.matched);
         assert_eq!(s.keepalive_days, Some(90));
+    }
+
+    #[test]
+    fn short_alias_matches_whole_word_only() {
+        assert_eq!(
+            suggest_keepalive(Some("PH"), None).policy_id.as_deref(),
+            Some("producthunt")
+        );
+        assert!(!suggest_keepalive(Some("Philips Hue"), Some("Widget")).matched);
+        assert!(!suggest_keepalive(Some("Graphite"), Some("Widget")).matched);
+    }
+
+    #[test]
+    fn domains_and_punctuation_still_match() {
+        for site in ["appsumo.com", "https://appsumo.com/deals", "App-Sumo"] {
+            assert_eq!(
+                suggest_keepalive(Some(site), None).policy_id.as_deref(),
+                Some("appsumo"),
+                "{site}"
+            );
+        }
+        assert_eq!(
+            suggest_keepalive(Some("humblebundle.com"), None).policy_id.as_deref(),
+            Some("humble")
+        );
+    }
+
+    #[test]
+    fn product_hint_requires_whole_word() {
+        assert!(!suggest_keepalive(None, Some("Peltdown Pro")).matched);
     }
 }

@@ -1,7 +1,7 @@
 {
-  "version": 1,
-  "updated": "2026-07-19",
-  "notes": "Curated starting dataset for Keep-alive Phase 1. Windows are conservative defaults sourced from public marketplace/vendor guidance and community reports; users must verify. confidence: high|medium|low.",
+  "version": 2,
+  "updated": "2026-10-06",
+  "notes": "Keep-alive Phase 1 dataset. IMPORTANT: marketplaces (AppSumo, StackSocial) were checked 2026-10-06 and publish no inactivity requirement; inactivity rules are set by each software vendor. Marketplace entries therefore carry Perpetua's conservative default reminder window, not a marketplace policy. Verify with the product vendor. confidence: high = vendor-published number; medium = vendor-published but ambiguous; low = Perpetua default / unverified.",
   "policies": [
     {
       "id": "appsumo",
@@ -9,9 +9,9 @@
       "aliases": ["appsumo", "app sumo", "sumo"],
       "product_hints": [],
       "keepalive_days": 90,
-      "source": "AppSumo marketplace guidance / deal page keep-alive notes (community-verified)",
-      "last_verified": "2026-07-01",
-      "confidence": "medium"
+      "source": "AppSumo Terms of Use (modified 2025-02-11): no inactivity requirement; partners set their own policies (60-day typical refund window). 90 days is a Perpetua default reminder.",
+      "last_verified": "2026-10-06",
+      "confidence": "low"
     },
     {
       "id": "stacksocial",
@@ -19,8 +19,8 @@
       "aliases": ["stacksocial", "stack social"],
       "product_hints": [],
       "keepalive_days": 90,
-      "source": "Marketplace deal inactivity patterns (conservative default)",
-      "last_verified": "2026-07-01",
+      "source": "StackSocial Terms (updated 2026-04-06): no inactivity requirement; refund and product terms are vendor-specific. 90 days is a Perpetua default reminder.",
+      "last_verified": "2026-10-06",
       "confidence": "low"
     },
     {
