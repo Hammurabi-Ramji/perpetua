@@ -5,6 +5,7 @@
   "description": "Sync lifetime-deal licenses from AppSumo, Product Hunt, StackSocial, and Humble Bundle into your local Perpetua vault",
   "permissions": [
     "storage",
+    "notifications",
     "activeTab",
     "scripting"
   ],
