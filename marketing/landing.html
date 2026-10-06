@@ -5,6 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Perpetua — a ledger for licenses you already own</title>
 <meta name="description" content="Perpetua is a local-first desktop vault for lifetime software licenses. Track keep-alive requirements, get reminded before a deal lapses, and keep everything on your own machine.">
+<link rel="canonical" href="https://perpetua.hammurabi.click/">
+<meta name="robots" content="index,follow">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Perpetua">
+<meta property="og:title" content="Perpetua — a ledger for licenses you already own">
+<meta property="og:description" content="Track lifetime software licenses and keep-alive reminders in a local-first Windows vault.">
+<meta property="og:url" content="https://perpetua.hammurabi.click/">
+<meta property="og:image" content="https://perpetua.hammurabi.click/manus-storage/perpetua-og_23631adf.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Perpetua — a ledger for licenses you already own">
+<meta name="twitter:description" content="Track lifetime software licenses and keep-alive reminders in a local-first Windows vault.">
+<meta name="twitter:image" content="https://perpetua.hammurabi.click/manus-storage/perpetua-og_23631adf.png">
 <link rel="icon" type="image/png" href="assets/icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -42,6 +54,10 @@
   }
   .mono{font-family:'IBM Plex Mono',monospace;}
   a{color:inherit;}
+  :focus-visible{outline:3px solid #C18300;outline-offset:4px;}
+  .skip-link{position:absolute;left:12px;top:-100px;z-index:10;background:var(--paper);color:var(--ink);padding:10px 14px;}
+  .skip-link:focus{top:12px;}
+  @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto;}}
   img{max-width:100%;display:block;}
   .wrap{max-width:1120px;margin:0 auto;padding:0 32px;}
   @media(max-width:640px){.wrap{padding:0 20px;}}
@@ -255,8 +271,8 @@
   .price-row.head .price-num{font-family:'Fraunces',serif;font-size:22px;}
   .price-row:not(.head){font-size:14.5px;}
   .price-row:not(.head):nth-child(odd){background:#FBF8EF;}
-  .yes{color:var(--green);}
-  .no{color:#B7A87E;}
+  .yes{color:#35633B;}
+  .no{color:#6D5730;}
   .price-cta{margin-top:26px;display:flex;align-items:center;gap:18px;flex-wrap:wrap;}
   .price-fine{color:var(--text-mute);font-size:13.5px;}
 
@@ -277,17 +293,18 @@
 </style>
 </head>
 <body>
+<a class="skip-link" href="#main">Skip to main content</a>
 
 <header>
   <div class="wrap header-row">
     <div class="brand">
-      <img src="assets/icon.png" alt="Perpetua">
+      <img src="assets/icon.png" alt="" width="32" height="32">
       <div>
         <span>Perpetua</span>
         <small>by Hammurabi Coding Company</small>
       </div>
     </div>
-    <nav>
+    <nav aria-label="Primary navigation">
       <a href="#problem">Why Perpetua</a>
       <a href="#features">Features</a>
       <a href="#pricing">Pricing</a>
@@ -297,6 +314,7 @@
   </div>
 </header>
 
+<main id="main">
 <section class="hero">
   <div class="wrap hero-grid">
     <div>
@@ -452,7 +470,7 @@
         <li><span class="mark">—</span> Pro activation runs through Polar's customer portal, or an offline key via <span class="mono" style="font-size:13px;">perpetua mint-key</span>. Your organization ID is public, baked in at build time — it isn't a secret.</li>
         <li><span class="mark">—</span> Pro accounts can share a vault with one other local account on the same machine. That's it — no cross-device sync, no server in between.</li>
       </ul>
-      <div class="trust-note">We'd rather tell you what Perpetua doesn't do than let you assume it does. Full detail in the <a href="#" style="text-decoration:underline;">Privacy Policy</a> and <a href="#" style="text-decoration:underline;">Terms</a>.</div>
+      <div class="trust-note">We'd rather tell you what Perpetua doesn't do than let you assume it does. Full detail in the <a href="https://perpetua.hammurabi.click/privacy" style="text-decoration:underline;">Privacy Policy</a> and <a href="https://perpetua.hammurabi.click/terms" style="text-decoration:underline;">Terms</a>.</div>
     </div>
   </div>
 </section>
@@ -463,24 +481,25 @@
       <div class="kicker">Pricing</div>
       <h2>One purchase. No subscription — same philosophy as the deals it tracks.</h2>
     </div>
-    <div class="price-table">
-      <div class="price-row head">
-        <div class="plan-name">Plan</div>
-        <div class="plan-name">Free</div>
-        <div class="plan-name">Pro <span class="price-num" style="margin-left:8px;">$49.99</span><div style="font-size:11px;color:var(--gold-soft);font-weight:400;">one time</div></div>
+    <div class="price-table" role="table" aria-label="Compare Perpetua Free and Pro plans">
+      <div class="price-row head" role="row">
+        <div class="plan-name" role="columnheader">Feature</div>
+        <div class="plan-name" role="columnheader">Free</div>
+        <div class="plan-name" role="columnheader">Pro · regular price $49.99 USD, one time</div>
       </div>
-      <div class="price-row"><div>License vault</div><div class="yes">Up to 3</div><div class="yes">Unlimited</div></div>
-      <div class="price-row"><div>Keep-alive reminders &amp; tray watcher</div><div class="yes">Included</div><div class="yes">Included</div></div>
-      <div class="price-row"><div>OCR autofill from screenshots</div><div class="yes">Included</div><div class="yes">Included</div></div>
-      <div class="price-row"><div>Export to JSON / CSV</div><div class="yes">Included</div><div class="yes">Included</div></div>
-      <div class="price-row"><div>Rotating local backups</div><div class="yes">Included</div><div class="yes">Included</div></div>
-      <div class="price-row"><div>Encrypted cloud backup &amp; restore</div><div class="no">—</div><div class="yes">Included</div></div>
-      <div class="price-row"><div>Vault sharing (same machine)</div><div class="no">—</div><div class="yes">Included</div></div>
+      <div class="price-row" role="row"><div role="rowheader">License vault</div><div class="yes" role="cell">Up to 3</div><div class="yes" role="cell">Unlimited</div></div>
+      <div class="price-row" role="row"><div role="rowheader">Keep-alive reminders &amp; tray watcher</div><div class="yes" role="cell">Included</div><div class="yes" role="cell">Included</div></div>
+      <div class="price-row" role="row"><div role="rowheader">OCR autofill from screenshots</div><div class="yes" role="cell">Included</div><div class="yes" role="cell">Included</div></div>
+      <div class="price-row" role="row"><div role="rowheader">Export to JSON / CSV</div><div class="yes" role="cell">Included</div><div class="yes" role="cell">Included</div></div>
+      <div class="price-row" role="row"><div role="rowheader">Rotating local backups</div><div class="yes" role="cell">Included</div><div class="yes" role="cell">Included</div></div>
+      <div class="price-row" role="row"><div role="rowheader">Encrypted cloud backup &amp; restore</div><div class="no" role="cell">Not included</div><div class="yes" role="cell">Included</div></div>
+      <div class="price-row" role="row"><div role="rowheader">Vault sharing (same machine)</div><div class="no" role="cell">Not included</div><div class="yes" role="cell">Included</div></div>
     </div>
     <div class="price-cta">
       <a href="#download" class="btn-primary" style="background:var(--ink);color:var(--paper);">Start free, upgrade any time</a>
-      <span class="price-fine">Pro unlocks by Polar checkout or an offline key — either way, it's yours for good.</span>
+      <span class="price-fine">Polar applied an automatic early-bird discount when checked (total $19.99 USD on October 5, 2026). Availability, tax, and the final amount are confirmed by Polar before payment.</span>
     </div>
+    <p><a href="https://buy.polar.sh/polar_cl_78OH9xU4qiWkVMEjbUpLYe7amh6I1Yw1cxpp50aBwuB">Check current price at Polar checkout</a></p>
   </div>
 </section>
 
@@ -488,11 +507,12 @@
   <div class="wrap cta-inner">
     <h2>Your licenses have already been paid for once.</h2>
     <div class="cta-actions">
-      <a href="https://perpetua.hammurabi.click" class="btn-primary">Download Perpetua for Windows</a>
+      <a href="https://perpetua.hammurabi.click/manus-storage/Perpetua_1.0.0_x64-setup_7303e08c.exe" class="btn-primary">Download Perpetua for Windows</a>
       <span class="platform-note">v1.0.0 · MSI &amp; NSIS installers · macOS and Linux are not yet supported</span>
     </div>
   </div>
 </section>
+</main>
 
 <footer>
   <div class="wrap">
@@ -505,9 +525,9 @@
       </div>
       <div class="foot-col">
         <h4>Legal</h4>
-        <a href="#">Terms of Use</a>
-        <a href="#">Privacy Policy</a>
-        <a href="#">Support</a>
+        <a href="https://perpetua.hammurabi.click/terms">Terms of Use</a>
+        <a href="https://perpetua.hammurabi.click/privacy">Privacy Policy</a>
+        <a href="mailto:support@hammurabicoding.com">Support</a>
       </div>
       <div class="foot-col">
         <h4>Support</h4>

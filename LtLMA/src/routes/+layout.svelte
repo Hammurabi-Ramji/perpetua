@@ -7,7 +7,7 @@
 	import AppShell from '$lib/components/AppShell.svelte';
 	import UpgradeModal from '$lib/components/UpgradeModal.svelte';
 	import { auth } from '$lib/stores/auth';
-	import { refreshEntitlement } from '$lib/stores/entitlement';
+	import { paywallOpen, refreshEntitlement } from '$lib/stores/entitlement';
 
 	let mounted = false;
 
@@ -79,7 +79,7 @@
 {:else if $page.url.pathname === '/login'}
 	<slot />
 {:else if $auth.user}
-	<div class="app-layout">
+		<div class="app-layout" inert={$paywallOpen}>
 		<AppShell />
 		<main class="page-shell">
 			<slot />
