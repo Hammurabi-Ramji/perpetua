@@ -94,6 +94,11 @@ still works via offline `perpetua mint-key` HS256 keys.
 
 ## Checksums (recommended before publish)
 
+`build-release.ps1` now writes `src-tauri\target\release\bundle\SHA256SUMS.txt`
+automatically (`scripts\Write-Checksums.ps1`); publish it next to the download.
+Optional code signing is driven by env vars - see
+[SIGNING-AND-STORE.md](./SIGNING-AND-STORE.md). Manual equivalent:
+
 ```powershell
 Get-FileHash .\src-tauri\target\release\perpetua.exe -Algorithm SHA256
 Get-ChildItem .\src-tauri\target\release\bundle -Recurse -Include *.exe,*.msi |

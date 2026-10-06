@@ -42,7 +42,17 @@
     ],
     "category": "Utility",
     "shortDescription": "Local-first lifetime license vault with keep-alive reminders",
-    "longDescription": "Perpetua is a local-first desktop vault for lifetime software licenses. Track renewals and inactivity windows, get keep-alive reminders, export/backup your vault, and unlock Pro via Polar or offline keys. Built with Tauri 2 + SvelteKit + Rust/Axum + SQLite."
+    "longDescription": "Perpetua is a local-first desktop vault for lifetime software licenses. Track renewals and inactivity windows, get keep-alive reminders, export/backup your vault, and unlock Pro via Polar or offline keys. Built with Tauri 2 + SvelteKit + Rust/Axum + SQLite.",
+    "windows": {
+      "webviewInstallMode": {
+        "type": "offlineInstaller",
+        "silent": true
+      },
+      "signCommand": {
+        "cmd": "powershell",
+        "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "../scripts/Sign-Windows.ps1", "%1"]
+      }
+    }
   },
   "plugins": {}
 }

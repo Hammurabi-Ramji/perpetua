@@ -10,6 +10,9 @@
 # Outputs (after success):
 #   src-tauri\target\release\perpetua.exe
 #   src-tauri\target\release\bundle\nsis\*.exe  (and/or msi\)
+#   src-tauri\target\release\bundle\SHA256SUMS.txt
+# Optional signing: set PERPETUA_* env vars (see scripts\Sign-Windows.ps1 and
+# docs\SIGNING-AND-STORE.md). With none set the build is unsigned, as before.
 # See docs\RELEASE.md for the full reproducible path and smoke checklist.
 
 $ErrorActionPreference = "Stop"
@@ -79,6 +82,16 @@ if (Test-Path -LiteralPath $bundleDir) {
         ForEach-Object { Write-Host "  $($_.FullName)" }
 } else {
     Write-Warning "Bundle directory not found yet at $bundleDir"
+}
+
+# Publish-ready checksums (non-fatal: a failure here must not fail a good build).
+# Signing, when configured via PERPETUA_* env vars, already happened inside
+# `tauri build` (bundle.windows.signCommand -> scripts\Sign-Windows.ps1), so
+# these hashes cover the final, signed bytes. See docs\SIGNING-AND-STORE.md.
+try {
+    & (Join-Path $PSScriptRoot "scripts\Write-Checksums.ps1") -ReleaseDir $releaseDir -ShowSignature
+} catch {
+    Write-Warning "Checksum generation skipped: $($_.Exception.Message)"
 }
 
 Write-Host ""
