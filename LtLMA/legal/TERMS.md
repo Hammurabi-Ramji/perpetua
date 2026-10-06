@@ -23,6 +23,12 @@ Perpetua on devices you control for managing your own software licenses.
   the product. Future “Auto-Maintain” automation is **not** included unless
   explicitly sold and enabled.
 
+- Lifetime: “Lifetime” means Pro includes all updates to the current major
+  version and perpetual use of the versions you have installed. Future major
+  versions may be offered separately.
+- Refunds: we will refund Pro in full within 30 days of purchase on request to
+  support@hammurabi.click.
+
 ## 4. Your responsibilities
 
 You are solely responsible for:

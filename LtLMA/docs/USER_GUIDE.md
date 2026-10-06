@@ -144,8 +144,8 @@ into Perpetua and copy a fresh one.
 ## Upgrading to Pro
 
 The free tier stores up to 3 licenses. **Unlock unlimited** opens the upgrade
-flow — either a Polar-hosted purchase (if configured) or an offline license
-key you can activate directly.
+flow — a Polar-hosted purchase ($49.99 one-time) that activates Pro in your
+build. (Offline keys are internal fulfillment only.)
 
 ## Troubleshooting
 
