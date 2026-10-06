@@ -227,7 +227,7 @@
 			{#if suggestion.matched && suggestion.source}
 				<span class="muted small"> Source: {suggestion.source}.</span>
 			{/if}
-			{#if suggestion.matched}
+			{#if suggestion.matched && suggestion.keepalive_days != null}
 				<button type="button" class="linkish" on:click={applySuggestion}>Apply suggestion</button>
 			{/if}
 		</p>

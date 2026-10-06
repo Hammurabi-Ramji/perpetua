@@ -1,8 +1,32 @@
 {
-  "version": 2,
+  "version": 3,
   "updated": "2026-10-06",
   "notes": "Keep-alive Phase 1 dataset. IMPORTANT: marketplaces (AppSumo, StackSocial) were checked 2026-10-06 and publish no inactivity requirement; inactivity rules are set by each software vendor. Marketplace entries therefore carry Perpetua's conservative default reminder window, not a marketplace policy. Verify with the product vendor. confidence: high = vendor-published number; medium = vendor-published but ambiguous; low = Perpetua default / unverified.",
   "policies": [
+    {
+      "id": "liveagent",
+      "vendor": "LiveAgent",
+      "kind": "vendor",
+      "aliases": ["liveagent", "live agent"],
+      "product_hints": ["liveagent", "live agent"],
+      "keepalive_days": null,
+      "note": "Free plan needs a login every 28 days; 2018/2019 AppSumo lifetime deals are protected even if suspended or deleted (contact LiveAgent chat with your AppSumo code).",
+      "source": "LiveAgent FAQ: Account Inactivity, Suspension and Termination Policy (page shows 'Last Updated: Mar 23'): paid plans have no inactivity requirement",
+      "last_verified": "2026-10-06",
+      "confidence": "medium"
+    },
+    {
+      "id": "pcloud",
+      "vendor": "pCloud",
+      "kind": "vendor",
+      "aliases": ["pcloud", "p cloud"],
+      "product_hints": ["pcloud", "p cloud"],
+      "keepalive_days": null,
+      "note": "Free accounts are closed after 12 months of inactivity; paid and Lifetime accounts have no inactivity clause.",
+      "source": "pCloud Help Center: Account Inactivity (no date shown on page)",
+      "last_verified": "2026-10-06",
+      "confidence": "high"
+    },
     {
       "id": "appsumo",
       "vendor": "AppSumo",
@@ -66,6 +90,7 @@
     {
       "id": "generic-saas-90",
       "vendor": "Typical SaaS lifetime deal",
+      "kind": "fallback",
       "aliases": ["lifetime", "ltd", "saas"],
       "product_hints": ["lifetime", "ltd"],
       "keepalive_days": 90,
