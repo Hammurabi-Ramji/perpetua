@@ -927,7 +927,7 @@ async fn restore_vault_from_bytes_swaps_live_connection() {
 }
 
 #[tokio::test]
-async fn restore_route_is_reachable_without_auth_header() {
+async fn restore_route_is_reachable_without_auth_header_on_empty_vault() {
     let temp = tempdir().expect("temp dir");
     let conn = init_db_at(temp.path()).expect("db");
     let router = build_router(Arc::new(Mutex::new(conn)), Arc::new("test-secret".to_string()));
@@ -949,4 +949,43 @@ async fn restore_route_is_reachable_without_auth_header() {
         .expect("response");
 
     assert_ne!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+const RESTORE_BODY_NO_CONFIRM: &str = r#"{"webdav_url":"http://127.0.0.1:1","webdav_username":"u","webdav_password":"p","remote_path":"/x","recovery_key":"not-a-real-key"}"#;
+const RESTORE_BODY_CONFIRM: &str = r#"{"webdav_url":"http://127.0.0.1:1","webdav_username":"u","webdav_password":"p","remote_path":"/x","recovery_key":"not-a-real-key","confirm":true}"#;
+
+#[tokio::test]
+async fn restore_route_requires_auth_when_users_exist() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    create_user(&conn, "existing@example.com", "password123").expect("user");
+    let router = build_router(Arc::new(Mutex::new(conn)), Arc::new("test-secret".to_string()));
+
+    let response = router
+        .oneshot(http("POST", "/api/cloud-backup/restore", None, Some(RESTORE_BODY_CONFIRM)))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn restore_route_requires_confirm_when_users_exist() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let user = create_user(&conn, "existing@example.com", "password123").expect("user");
+    let token = create_jwt("test-secret", &user).expect("token");
+    let router = build_router(Arc::new(Mutex::new(conn)), Arc::new("test-secret".to_string()));
+
+    let response = router
+        .oneshot(http(
+            "POST",
+            "/api/cloud-backup/restore",
+            Some(&token),
+            Some(RESTORE_BODY_NO_CONFIRM),
+        ))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }

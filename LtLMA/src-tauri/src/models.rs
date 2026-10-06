@@ -284,6 +284,9 @@ pub struct RestoreCloudBackupRequest {
     pub webdav_password: String,
     pub remote_path: String,
     pub recovery_key: String,
+    /// Must be true when the vault already has accounts (restore replaces them).
+    #[serde(default)]
+    pub confirm: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

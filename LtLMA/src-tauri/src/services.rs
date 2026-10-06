@@ -1710,20 +1710,51 @@ pub async fn restore_vault_from_bytes_at(
     let tmp_path = path.with_extension("db.restoring");
     fs::write(&tmp_path, plaintext)?;
 
-    // Sanity check before committing to it: does it even open as a valid
-    // Perpetua vault? Guards against a corrupted download silently bricking
-    // the live vault.
-    {
+    // Validate and migrate the candidate file BEFORE touching the live
+    // connection, so any failure leaves the app on its current vault.
+    let prepared: Result<()> = (|| {
         let probe = Connection::open(&tmp_path)?;
+        let integrity: String = probe.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+        if integrity != "ok" {
+            return Err(anyhow!("backup failed integrity check: {integrity}"));
+        }
         probe.query_row("SELECT COUNT(*) FROM users", [], |row| row.get::<_, i64>(0))?;
+        crate::database::migrate_connection(&probe)?;
+        probe.execute_batch("PRAGMA wal_checkpoint(FULL);")?;
+        Ok(())
+    })();
+    if let Err(error) = prepared {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(error);
     }
 
     let mut guard = db.lock().await;
+
+    // Safety snapshot of the current vault, so a mistaken restore is undoable.
+    let snapshot_dir = crate::database::backup_dir_at(path.parent().unwrap_or_else(|| std::path::Path::new(".")))?;
+    if let Err(error) = create_backup_in_dir(&guard, &snapshot_dir) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(anyhow!("could not snapshot current vault before restore: {error}"));
+    }
+
     // Release the old connection's file handle before renaming over it —
     // required on Windows, which won't allow replacing an open file.
     drop(std::mem::replace(&mut *guard, Connection::open_in_memory()?));
-    fs::rename(&tmp_path, &path)?;
-    *guard = Connection::open(&path)?;
-
-    Ok(())
+    let swap = fs::rename(&tmp_path, path)
+        .map_err(anyhow::Error::from)
+        .and_then(|_| Connection::open(path).map_err(anyhow::Error::from));
+    match swap {
+        Ok(conn) => {
+            *guard = conn;
+            Ok(())
+        }
+        Err(error) => {
+            // Roll back to whatever is at `path` so we never stay on an empty DB.
+            let _ = fs::remove_file(&tmp_path);
+            if let Ok(conn) = Connection::open(path) {
+                *guard = conn;
+            }
+            Err(error)
+        }
+    }
 }

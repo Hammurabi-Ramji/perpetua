@@ -314,9 +314,9 @@ export function syncCloudBackupNow() {
   return request<CloudBackupSettings>("/cloud-backup/sync", { method: "POST" });
 }
 
-// Unauthenticated on the backend by design — a fresh install has no session
-// yet. request() only attaches a token if one already exists in
-// localStorage, so this is safe to call before login the same way.
+// Unauthenticated on the backend only while the vault has no accounts (fresh
+// install). Otherwise it needs a valid session token and `confirm: true`.
+// request() attaches the stored token when present.
 export function restoreCloudBackup(input: RestoreCloudBackupInput) {
   return request<{ restored: boolean }>("/cloud-backup/restore", {
     method: "POST",

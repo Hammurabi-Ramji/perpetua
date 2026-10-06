@@ -158,6 +158,8 @@ export interface RestoreCloudBackupInput {
   webdav_password: string;
   remote_path: string;
   recovery_key: string;
+  /** Required (true) when the vault already has accounts; restore replaces everything. */
+  confirm: boolean;
 }
 
 export const emptyLicense = (): LicenseInput => ({

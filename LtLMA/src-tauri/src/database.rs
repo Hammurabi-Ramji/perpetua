@@ -79,7 +79,13 @@ pub fn init_db() -> Result<Connection> {
 
 pub fn init_db_at(base_dir: &Path) -> Result<Connection> {
     let conn = Connection::open(db_path_at(base_dir)?)?;
+    migrate_connection(&conn)?;
+    Ok(conn)
+}
 
+/// Creates missing tables/columns and seeds built-in data. Idempotent; also
+/// run on a restored backup file so older backups gain newer columns.
+pub fn migrate_connection(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS users (
@@ -213,8 +219,8 @@ pub fn init_db_at(base_dir: &Path) -> Result<Connection> {
     // than treating them as never-expiring.
     let _ = conn.execute("ALTER TABLE vault_members ADD COLUMN expires_at TEXT", []);
 
-    seed_supported_sites(&conn)?;
-    Ok(conn)
+    seed_supported_sites(conn)?;
+    Ok(())
 }
 
 pub fn load_or_create_jwt_secret() -> Result<String> {

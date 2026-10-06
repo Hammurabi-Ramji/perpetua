@@ -1144,17 +1144,40 @@ async fn sync_cloud_backup_route(
     }
 }
 
-/// Unauthenticated by design: a brand-new install has no local user account
-/// to log in with, so restoring from a cloud backup is how it gets one. Rate
+/// Unauthenticated ONLY while the users table is empty: a brand-new install
+/// has no account to log in with, so restoring from a cloud backup is how it
+/// gets one. Once any account exists the restore would destroy local data, so
+/// it requires a valid Bearer session plus an explicit `confirm: true`. Rate
 /// limited the same as login/register since WebDAV creds + a recovery key
 /// form a credential-guessing surface.
 async fn restore_cloud_backup_route(
-    State((db, _jwt_secret)): State<(DbState, Arc<String>)>,
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
     Extension(limiter): Extension<AuthRateLimiter>,
+    headers: HeaderMap,
     Json(req): Json<RestoreCloudBackupRequest>,
 ) -> Response {
     if !limiter.0.allow() {
         return rate_limited();
+    }
+
+    let user_count: i64 = {
+        let conn = db.lock().await;
+        match conn.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0)) {
+            Ok(count) => count,
+            Err(error) => return failure(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
+        }
+    };
+
+    if user_count > 0 {
+        if let Err(error) = authorized_user(&headers, &db, jwt_secret.as_str()).await {
+            return error;
+        }
+        if !req.confirm {
+            return failure(
+                StatusCode::BAD_REQUEST,
+                "Restore replaces all data on this computer; confirmation is required",
+            );
+        }
     }
 
     let target = crate::cloud_backup::WebDavTarget {
