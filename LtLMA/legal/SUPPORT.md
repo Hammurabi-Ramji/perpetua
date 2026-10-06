@@ -5,8 +5,8 @@
 | Product | Perpetua (desktop Lifetime License Manager) |
 | Package id | `com.perpetua.app` |
 | Version (in-tree) | 1.0.0 |
-| Support email | support@hammurabicoding.com |
-| Legal / privacy | privacy@hammurabicoding.com |
+| Support email | support@hammurabi.click |
+| Legal / privacy | support@hammurabi.click (also handles privacy requests) |
 | Docs | `LtLMA/README.md`, `LtLMA/docs/TESTING.md`, `LtLMA/docs/RELEASE.md` |
 
 ## Before contacting support
