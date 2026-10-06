@@ -201,6 +201,9 @@ an explicit HTTP status:
 - **Sandbox dry-run:** set `POLAR_API_BASE` to the Polar sandbox at build time to
   test the full purchase → key → activate loop without real money. Pair with a
   **100%-off discount code** in the Polar dashboard.
+- **Automated dry-run (offline mock Polar + real worker + real backend, and the
+  sandbox runbook):** `polar-webhook/dryrun/README.md`
+  (`LtLMA/scripts/build-polar-dryrun-binary.ps1`, then `npm run dryrun` in `polar-webhook/`).
 
 ---
 

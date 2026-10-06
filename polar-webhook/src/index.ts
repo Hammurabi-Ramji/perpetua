@@ -7,6 +7,12 @@ export interface Env {
   POLAR_API_TOKEN: string;
   /** The "Early Bird — First 100" discount's id, from its URL in the Polar dashboard. */
   EARLY_BIRD_DISCOUNT_ID: string;
+  /**
+   * Optional Polar API origin. Defaults to production (https://api.polar.sh).
+   * Set to https://sandbox-api.polar.sh for the sandbox dry-run, or to a local
+   * mock server for the offline dry-run (see dryrun/README.md).
+   */
+  POLAR_API_BASE?: string;
 }
 
 const CORS_HEADERS = {
@@ -26,8 +32,9 @@ const HANDLED_EVENTS = new Set([
 ]);
 
 async function handleDiscountCount(env: Env): Promise<Response> {
+  const apiBase = (env.POLAR_API_BASE || "https://api.polar.sh").replace(/\/+$/, "");
   const response = await fetch(
-    `https://api.polar.sh/v1/discounts/${env.EARLY_BIRD_DISCOUNT_ID}`,
+    `${apiBase}/v1/discounts/${env.EARLY_BIRD_DISCOUNT_ID}`,
     { headers: { Authorization: `Bearer ${env.POLAR_API_TOKEN}` } },
   );
 

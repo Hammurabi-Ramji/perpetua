@@ -8,8 +8,11 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/",
-    "tail": "wrangler tail"
+    "test": "node --test \"test/**/*.test.ts\"",
+    "tail": "wrangler tail",
+    "dryrun": "node --test dryrun/purchase-to-activate.test.ts",
+    "dryrun:sandbox": "node --test dryrun/sandbox.test.ts",
+    "mock-polar": "node dryrun/mock-polar.ts"
   },
   "dependencies": {
     "@polar-sh/sdk": "1.0.0-alpha.20"

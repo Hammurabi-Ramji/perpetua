@@ -190,3 +190,23 @@ test("rejects non-POST requests", async () => {
   );
   assert.equal(res.status, 405);
 });
+
+test("discount-count honors POLAR_API_BASE (sandbox / local mock) and trims trailing slashes", async () => {
+  const originalFetch = globalThis.fetch;
+  let capturedUrl = "";
+  globalThis.fetch = (async (url: string) => {
+    capturedUrl = String(url);
+    return new Response(JSON.stringify({ redemptions_count: 100, max_redemptions: 100 }), { status: 200 });
+  }) as typeof fetch;
+
+  try {
+    const res = await worker.fetch(
+      new Request("https://example.com/discount-count"),
+      { ...env, POLAR_API_BASE: "https://sandbox-api.polar.sh/" },
+    );
+    assert.equal(capturedUrl, "https://sandbox-api.polar.sh/v1/discounts/discount_123");
+    assert.deepEqual(await res.json(), { claimed: 100, total: 100 });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
