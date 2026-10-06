@@ -3,7 +3,7 @@
 //   mock Polar (this repo)  --signed events-->  polar-webhook worker (real code)
 //        |  mints key                                    |  GET /discount-count
 //        v                                               v
-//   perpetua serve (real LtLMA backend, built with POLAR_API_BASE -> mock) --activate--> mock Polar
+//   perpetua serve (real Perpetua backend, built with POLAR_API_BASE -> mock) --activate--> mock Polar
 //
 // No real money, no live credentials, no network beyond 127.0.0.1. All secrets
 // are generated per run and never printed or written to the repo.

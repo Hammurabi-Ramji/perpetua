@@ -9,7 +9,7 @@ Polar, not our code, mints the license key. Our code does two independent things
 | Piece | Code | Role |
 | --- | --- | --- |
 | Webhook worker | `polar-webhook/src/index.ts` | Verifies Standard Webhooks signatures; only **logs** `order.paid`, `order.refunded`, `benefit_grant.revoked` (durable write is a TODO). Also serves `GET /discount-count`. It does **not** mint keys or grant access. |
-| Activation | `LtLMA/src-tauri/src/polar.rs`, `POST /api/activate` | At unlock, calls Polar's public `POST /v1/customer-portal/license-keys/activate`. Polar's answer is the sole authority; `pro=1` is then stored locally and never re-checked. |
+| Activation | `desktop/src-tauri/src/polar.rs`, `POST /api/activate` | At unlock, calls Polar's public `POST /v1/customer-portal/license-keys/activate`. Polar's answer is the sole authority; `pro=1` is then stored locally and never re-checked. |
 
 So "purchase -> activate" is really two parallel paths that meet in Polar:
 `purchase -> Polar mints key -> (email) -> user pastes key -> app activates against Polar`
@@ -24,7 +24,7 @@ generated per run, never printed, never written to disk.
 
 ```powershell
 # 1. Build a perpetua binary whose Polar base URL is the mock (one-time, ~2 min)
-..\LtLMA\scripts\build-polar-dryrun-binary.ps1          # prints PERPETUA_BIN=...
+..\desktop\scripts\build-polar-dryrun-binary.ps1        # prints PERPETUA_BIN=...
 # 2. Run
 cd polar-webhook; npm ci
 $env:PERPETUA_BIN = "<path printed above>"
@@ -67,7 +67,7 @@ Sandbox-only; never use production tokens here. `sandbox.test.ts` refuses to run
 3. Run the worker against the sandbox (local `wrangler dev`, or deploy):
    - set vars: `EARLY_BIRD_DISCOUNT_ID=<sandbox id>`, `POLAR_API_BASE=https://sandbox-api.polar.sh`
    - set secrets: `wrangler secret put POLAR_WEBHOOK_SECRET`, `wrangler secret put POLAR_API_TOKEN` (sandbox values). For `wrangler dev`, put them in the git-ignored `polar-webhook/.dev.vars`.
-4. Build the app against the sandbox: `..\LtLMA\scripts\build-polar-dryrun-binary.ps1 -Mode sandbox -OrganizationId <sandbox org id>`.
+4. Build the app against the sandbox: `..\desktop\scripts\build-polar-dryrun-binary.ps1 -Mode sandbox -OrganizationId <sandbox org id>`.
 5. Buy once through the sandbox checkout using the 100%-off code; copy the emailed license key. Check the worker logs (`wrangler tail`) show `polar webhook: order.paid`.
 6. Optional: refund that order in the sandbox dashboard and copy another purchase's key for the revoked check (`POLAR_SANDBOX_REVOKED_KEY` should be the key from the refunded order).
 7. Fill the values (see `.env.example`) in your shell and run `npm run dryrun:sandbox`.

@@ -1,22 +1,28 @@
-# Perpetua desktop (LtLMA) — quality gates for the launch product
+# Perpetua desktop (desktop/) + companion extension + Polar webhook worker —
+# quality gates for the launch product.
 name: Perpetua CI
 
 on:
   push:
     branches: [main, master]
     paths:
-      - "LtLMA/**"
+      - "desktop/**"
+      - "polar-webhook/**"
       - ".github/workflows/perpetua-ci.yml"
   pull_request:
     branches: [main, master]
     paths:
-      - "LtLMA/**"
+      - "desktop/**"
+      - "polar-webhook/**"
       - ".github/workflows/perpetua-ci.yml"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 defaults:
   run:
-    working-directory: LtLMA
+    working-directory: desktop
 
 jobs:
   quality:
@@ -42,24 +48,26 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
-          cache-dependency-path: LtLMA/package-lock.json
+          cache-dependency-path: desktop/package-lock.json
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: LtLMA/src-tauri -> target
+          workspaces: desktop/src-tauri -> target
 
       - name: Install frontend dependencies
         run: npm ci
 
       - name: Rust tests
-        working-directory: LtLMA/src-tauri
-        run: cargo test
+        working-directory: desktop/src-tauri
+        run: cargo test --locked
 
       - name: Frontend unit tests
         run: npm test
@@ -70,23 +78,69 @@ jobs:
       - name: Frontend production build
         run: npm run build
 
+  # Windows is the primary install target (the only platform the release
+  # script and signing pipeline cover today). The keyring backend, path
+  # handling and `windows_subsystem` attribute only compile here, so a
+  # Linux-only test run can go green on code that doesn't build for customers.
+  rust-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+
+      - name: Rust tests (Windows)
+        working-directory: desktop/src-tauri
+        run: cargo test --locked
+
   browser-extension:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: LtLMA/browser-extension
+        working-directory: browser-extension
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
-          cache-dependency-path: LtLMA/browser-extension/package-lock.json
+          cache-dependency-path: browser-extension/package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
       - name: Extension unit tests
+        run: npm test
+
+  polar-webhook:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: polar-webhook
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          # `node --test` on .ts files needs Node's built-in type stripping (>= 22.6).
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: polar-webhook/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Worker unit tests
         run: npm test

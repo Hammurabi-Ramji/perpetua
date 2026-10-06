@@ -4,7 +4,7 @@
 // no real money and no credentials.
 //
 //   Polar API surface (what the app / worker actually call)
-//     POST /v1/customer-portal/license-keys/activate   (public; LtLMA polar.rs)
+//     POST /v1/customer-portal/license-keys/activate   (public; desktop/src-tauri/src/polar.rs)
 //     GET  /v1/discounts/:id                           (Bearer token; worker)
 //   Polar behavior simulated
 //     purchase  -> mints a license key, bumps discount redemptions,

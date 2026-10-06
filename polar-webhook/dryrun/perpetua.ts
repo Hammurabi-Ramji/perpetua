@@ -1,4 +1,4 @@
-// Drives a headless `perpetua serve` (the real LtLMA Axum backend) over HTTP.
+// Drives a headless `perpetua serve` (the real Perpetua Axum backend) over HTTP.
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -28,7 +28,7 @@ export function resolveBinary(): string {
   if (!bin || !existsSync(bin)) {
     throw new Error(
       "PERPETUA_BIN must point at a perpetua binary built with POLAR_ORGANIZATION_ID and " +
-        "POLAR_API_BASE baked in. Build one with LtLMA/scripts/build-polar-dryrun-binary.ps1 " +
+        "POLAR_API_BASE baked in. Build one with desktop/scripts/build-polar-dryrun-binary.ps1 " +
         "(see polar-webhook/dryrun/README.md).",
     );
   }
