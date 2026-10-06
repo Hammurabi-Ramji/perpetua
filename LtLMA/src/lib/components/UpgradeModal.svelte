@@ -2,33 +2,31 @@
 	import { activateLicense } from '$lib/api';
 	import { closePaywall, entitlement, paywallOpen } from '$lib/stores/entitlement';
 
-	// Polar.sh checkout for the Perpetua Pro lifetime deal (Merchant of Record:
-	// they handle tax/VAT/fraud and email the license key on purchase).
-	// Replace with your product's Checkout Link id from the Polar dashboard.
-	const BUY_URL = 'https://buy.polar.sh/<checkout-link-id>';
-	// One-time lifetime price. PRO_ANCHOR is the strike-through "regular" price
-	// shown next to the launch price to frame it as a deal.
-	const PRO_PRICE = '$29';
-	const PRO_ANCHOR = '$69';
+	// Permanent checkout link; Polar determines the current automatic discount,
+	// tax and final payable amount. Never hard-code a promotional total here.
+	const BUY_URL = 'https://buy.polar.sh/polar_cl_78OH9xU4qiWkVMEjbUpLYe7amh6I1Yw1cxpp50aBwuB';
 
 	let activationKey = '';
 	let activating = false;
 	let activationError: string | null = null;
+	let dialog: HTMLDivElement;
+	let previousFocus: HTMLElement | null = null;
+	let wasOpen = false;
 
 	function close() {
 		activationError = null;
 		activationKey = '';
 		closePaywall();
+		previousFocus?.focus();
 	}
 
 	async function handleActivate() {
 		activating = true;
 		activationError = null;
 		try {
-			const result = await activateLicense(activationKey.trim());
-			entitlement.set(result);
-			activationKey = '';
-			closePaywall();
+				const result = await activateLicense(activationKey.trim());
+				entitlement.set(result);
+				close();
 			// Let any open page reload its data now that the cap is gone.
 			window.dispatchEvent(new CustomEvent('perpetua:pro-unlocked'));
 		} catch (error) {
@@ -39,12 +37,37 @@
 	}
 
 	function onKeydown(event: KeyboardEvent) {
+		if (!$paywallOpen) return;
 		if (event.key === 'Escape') {
 			close();
+		} else if (event.key === 'Tab' && dialog) {
+			const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+				'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+			)).filter((element) => !element.hasAttribute('hidden') && getComputedStyle(element).display !== 'none');
+			if (!focusable.length) return;
+			const first = focusable[0];
+			const last = focusable[focusable.length - 1];
+			if (!dialog.contains(document.activeElement)) {
+				event.preventDefault();
+				first.focus();
+			} else if (event.shiftKey && document.activeElement === first) {
+				event.preventDefault();
+				last.focus();
+			} else if (!event.shiftKey && document.activeElement === last) {
+				event.preventDefault();
+				first.focus();
+			}
 		}
 	}
 
 	$: limit = $entitlement?.free_limit ?? 3;
+	$: if ($paywallOpen && !wasOpen) {
+		previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+		wasOpen = true;
+		setTimeout(() => dialog?.querySelector<HTMLElement>('a[href]')?.focus(), 0);
+	} else if (!$paywallOpen) {
+		wasOpen = false;
+	}
 </script>
 
 <svelte:window on:keydown={onKeydown} />
@@ -52,21 +75,17 @@
 {#if $paywallOpen}
 	<div class="modal-backdrop">
 		<button class="backdrop-button" type="button" aria-label="Close" on:click={close}></button>
-		<div class="modal" role="dialog" aria-modal="true" aria-label="Unlock Perpetua Pro">
-			<h3>Unlock Perpetua Pro</h3>
+			<div class="modal" role="dialog" aria-modal="true" aria-labelledby="upgrade-title" bind:this={dialog}>
+				<h3 id="upgrade-title">Unlock Perpetua Pro</h3>
 			<p class="muted">
 				The free plan stores up to {limit} licenses. Pro is a one-time purchase — pay once, store
 				unlimited licenses forever. No subscription, all local.
 			</p>
 
-			<p class="price-line">
-				<span class="price-anchor">{PRO_ANCHOR}</span>
-				<span class="price-now">{PRO_PRICE}</span>
-				<span class="price-tag">Founder's price</span>
-			</p>
+				<p class="price-line">Regular price $49.99 USD. An automatic early-bird discount may apply; Polar shows the current total and any tax before you pay.</p>
 
-			<a class="buy-button" href={BUY_URL} target="_blank" rel="noopener noreferrer">
-				Buy Pro — lifetime unlock
+				<a class="buy-button" href={BUY_URL} target="_blank" rel="noopener noreferrer">
+					Check current price at Polar
 			</a>
 
 			<div class="activate-block">
@@ -78,7 +97,7 @@
 					autocomplete="off"
 				/>
 				{#if activationError}
-					<p class="error-banner">{activationError}</p>
+						<p class="error-banner" role="alert">{activationError}</p>
 				{/if}
 				<div class="modal-actions">
 					<button type="button" class="link-button" on:click={close}>Maybe later</button>
@@ -135,25 +154,7 @@
 		margin: 1rem 0 0.25rem;
 	}
 
-	.price-anchor {
-		color: #9a9ab0;
-		text-decoration: line-through;
-		font-size: 1.1rem;
-	}
-
-	.price-now {
-		font-size: 2rem;
-		font-weight: 700;
-	}
-
-	.price-tag {
-		font-size: 0.8rem;
-		font-weight: 600;
-		color: #1c7a52;
-		background: rgba(40, 170, 110, 0.15);
-		padding: 0.15rem 0.5rem;
-		border-radius: 0.5rem;
-	}
+	.price-line { line-height: 1.5; }
 
 	.buy-button {
 		display: block;

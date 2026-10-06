@@ -30,13 +30,10 @@ describe("Perpetua license form", () => {
   it("submits the current model", async () => {
     const model = emptyLicense();
     const submitSpy = vi.fn();
-    const { component } = render(LicenseForm, {
-      model,
-      submitLabel: "Create license",
-      busy: false,
+    render(LicenseForm, {
+      props: { model, submitLabel: "Create license", busy: false },
+      events: { submit: submitSpy },
     });
-
-    component.$on("submit", submitSpy);
 
     await fireEvent.input(screen.getByPlaceholderText("Figma Pro"), {
       target: { value: "Test Product" },

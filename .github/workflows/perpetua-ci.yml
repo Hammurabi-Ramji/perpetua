@@ -1,16 +1,21 @@
-# Perpetua desktop (LtLMA) — quality gates for the launch product
+# Perpetua desktop, extension, webhook, and marketing-source quality gates
 name: Perpetua CI
-
 on:
   push:
     branches: [main, master]
     paths:
       - "LtLMA/**"
+      - "polar-webhook/**"
+      - "marketing/**"
+      - "nginx/**"
       - ".github/workflows/perpetua-ci.yml"
   pull_request:
     branches: [main, master]
     paths:
       - "LtLMA/**"
+      - "polar-webhook/**"
+      - "marketing/**"
+      - "nginx/**"
       - ".github/workflows/perpetua-ci.yml"
   workflow_dispatch:
 
@@ -23,7 +28,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Install Linux system dependencies
         run: |
           sudo apt-get update
@@ -38,37 +42,33 @@ jobs:
             libxdo-dev \
             libssl-dev \
             libayatana-appindicator3-dev
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: LtLMA/package-lock.json
-
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
-
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: LtLMA/src-tauri -> target
-
       - name: Install frontend dependencies
         run: npm ci
-
       - name: Rust tests
         working-directory: LtLMA/src-tauri
         run: cargo test
-
       - name: Frontend unit tests
         run: npm test
-
+      - name: Frontend lint
+        run: npm run lint
       - name: Typecheck
         run: npm run check
-
       - name: Frontend production build
         run: npm run build
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
 
   browser-extension:
     runs-on: ubuntu-latest
@@ -77,16 +77,28 @@ jobs:
         working-directory: LtLMA/browser-extension
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: LtLMA/browser-extension/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm audit --audit-level=high
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Extension unit tests
-        run: npm test
+  polar-webhook:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: polar-webhook
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: polar-webhook/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm audit --audit-level=high
