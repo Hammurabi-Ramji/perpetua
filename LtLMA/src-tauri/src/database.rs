@@ -94,7 +94,7 @@ pub fn migrate_connection(conn: &Connection) -> Result<()> {
             password_hash TEXT NOT NULL,
             notification_email TEXT,
             email_notifications INTEGER NOT NULL DEFAULT 1,
-            browser_notifications INTEGER NOT NULL DEFAULT 0,
+            browser_notifications INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL,
             last_login TEXT
         );
@@ -218,6 +218,23 @@ pub fn migrate_connection(conn: &Connection) -> Result<()> {
     // (NULL expires_at) simply can no longer be redeemed — fail closed rather
     // than treating them as never-expiring.
     let _ = conn.execute("ALTER TABLE vault_members ADD COLUMN expires_at TEXT", []);
+
+    // One-time: desktop reminders are now honoured, so existing users keep the
+    // behaviour they had before (reminders on). Guarded so a later opt-out sticks.
+    let migrated: bool = conn
+        .query_row(
+            "SELECT 1 FROM app_state WHERE key = 'migr_browser_notif_default_v1'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
+    if !migrated {
+        conn.execute("UPDATE users SET browser_notifications = 1", [])?;
+        conn.execute(
+            "INSERT OR REPLACE INTO app_state (key, value) VALUES ('migr_browser_notif_default_v1', '1')",
+            [],
+        )?;
+    }
 
     seed_supported_sites(conn)?;
     Ok(())

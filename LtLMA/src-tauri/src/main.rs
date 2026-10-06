@@ -91,6 +91,7 @@ fn main() {
             Ok(notices) => {
                 println!("{} due notification(s):", notices.len());
                 for n in notices {
+                    let _ = services::mark_notice_delivered(&conn, n.license_id, &n.kind);
                     println!("  [{}] {} — {}", n.kind, n.title, n.body);
                 }
             }
@@ -315,12 +316,21 @@ fn spawn_reminder_scheduler(handle: tauri::AppHandle) {
             };
 
             for notice in notices {
-                let _ = handle
+                let shown = handle
                     .notification()
                     .builder()
                     .title(&notice.title)
                     .body(&notice.body)
                     .show();
+                if shown.is_ok() {
+                    let state = handle.state::<AppState>();
+                    let conn = state.db.lock().await;
+                    if let Err(e) =
+                        services::mark_notice_delivered(&conn, notice.license_id, &notice.kind)
+                    {
+                        eprintln!("reminder scheduler: mark delivered failed: {e}");
+                    }
+                }
             }
 
             tokio::time::sleep(INTERVAL).await;

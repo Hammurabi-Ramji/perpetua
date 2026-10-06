@@ -22,8 +22,8 @@
 	let interested = false;
 	let settings: ReminderSettings = {
 		notification_email: '',
-		email_notifications: true,
-		browser_notifications: false
+		email_notifications: false,
+		browser_notifications: true
 	};
 
 	let recovery: AccountRecoverySettings = {
@@ -232,10 +232,7 @@
 				<input bind:value={settings.notification_email} type="email" placeholder="alerts@example.com" />
 			</label>
 
-			<label class="checkbox">
-				<input bind:checked={settings.email_notifications} type="checkbox" />
-				<span>Enable email reminders</span>
-			</label>
+			<p class="muted small">Email reminders are not available yet.</p>
 
 			<label class="checkbox">
 				<input bind:checked={settings.browser_notifications} type="checkbox" />

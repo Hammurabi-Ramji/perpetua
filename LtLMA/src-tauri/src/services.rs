@@ -309,7 +309,7 @@ pub fn create_user(conn: &Connection, email: &str, password: &str) -> Result<Use
     conn.execute(
         "INSERT INTO users (
             email, password_hash, notification_email, email_notifications, browser_notifications, created_at
-        ) VALUES (?, ?, ?, 1, 0, ?)",
+        ) VALUES (?, ?, ?, 1, 1, ?)",
         params![email, password_hash, email, now],
     )?;
 
@@ -856,15 +856,32 @@ fn mark_notified(conn: &Connection, license_id: i64, kind: &str, today: &str) ->
     Ok(())
 }
 
+/// Records that a notice was actually delivered, so it is not re-sent today.
+pub fn mark_notice_delivered(conn: &Connection, license_id: i64, kind: &str) -> Result<()> {
+    let today = Utc::now().date_naive().to_string();
+    mark_notified(conn, license_id, kind, &today)
+}
+
 /// The background maintainer's heart: finds reminders due within the notify
 /// window across all local accounts, skips any already notified today, marks the
-/// rest as notified, and returns them for delivery as OS notifications. Calling
-/// it twice in one day yields the second-call items only once (idempotent/day).
+/// rest, and returns them for delivery as OS notifications. Users with desktop
+/// reminders turned off are skipped. This does NOT mark anything as notified:
+/// callers must call `mark_notice_delivered` after successful delivery.
 pub fn collect_due_notifications(conn: &Connection) -> Result<Vec<ReminderNotice>> {
     let today = Utc::now().date_naive().to_string();
     let mut notices = Vec::new();
 
     for user_id in all_user_ids(conn)? {
+        let enabled: i64 = conn
+            .query_row(
+                "SELECT browser_notifications FROM users WHERE id = ?",
+                params![user_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        if enabled == 0 {
+            continue;
+        }
         for item in get_reminder_items(conn, user_id)? {
             if item.days_remaining > NOTIFY_WINDOW_DAYS {
                 continue;
@@ -888,7 +905,6 @@ pub fn collect_due_notifications(conn: &Connection) -> Result<Vec<ReminderNotice
                 _ => format!("License expires {}.", item.due_date),
             };
 
-            mark_notified(conn, item.license_id, &item.kind, &today)?;
             notices.push(ReminderNotice {
                 license_id: item.license_id,
                 kind: item.kind,

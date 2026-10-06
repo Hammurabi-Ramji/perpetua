@@ -56,7 +56,7 @@ is optional; offline fulfillment keys may be used without contacting Polar.
 - Export or delete vault data via in-app Vault tools or by deleting the app
   data directory.
 - Decline Polar activation and remain on the free tier (3 licenses).
-- Disable browser notifications in Reminder settings.
+- Turn off desktop reminders in Reminders settings.
 
 ## Children
 

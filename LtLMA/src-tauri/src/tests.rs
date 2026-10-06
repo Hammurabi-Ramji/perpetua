@@ -12,7 +12,7 @@ use crate::api::build_router;
 use crate::database::{backup_dir_at, db_path_at, init_db_at};
 use crate::models::{AccountRecoverySettings, EnableCloudBackupRequest, LicensePayload};
 use crate::services::{
-    activate_pro, add_license, authenticate_user, collect_due_notifications, confirm_password_reset,
+    activate_pro, add_license, authenticate_user, collect_due_notifications, mark_notice_delivered, confirm_password_reset,
     create_backup_in_dir, create_jwt, create_user, delete_license, enable_cloud_backup,
     export_licenses_csv, export_licenses_json, get_entitlement, get_license_by_id, get_license_stats,
     get_licenses, get_reminder_items, import_licenses_csv, import_licenses_json, list_backups_in_dir,
@@ -177,9 +177,32 @@ fn background_notifications_fire_for_due_items_and_dedupe_per_day() {
     let first = collect_due_notifications(&conn).expect("first pass");
     assert_eq!(first.len(), 2, "due action + near expiry should notify");
 
+    // Not marked until delivery is confirmed: still pending.
+    assert_eq!(collect_due_notifications(&conn).expect("pending").len(), 2);
+    for n in &first {
+        mark_notice_delivered(&conn, n.license_id, &n.kind).expect("mark");
+    }
+
     // Same day: already-notified items are not re-sent.
     let second = collect_due_notifications(&conn).expect("second pass");
     assert!(second.is_empty(), "no duplicate notifications within a day");
+}
+
+#[test]
+fn users_with_desktop_reminders_off_get_no_notices() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let user = create_user(&conn, "quiet@example.com", "password123").expect("user");
+    let today = chrono::Utc::now().date_naive().format("%Y-%m-%d").to_string();
+    add_license(&conn, user.id, sample_license("Expires Today", Some(&today))).expect("license");
+    assert_eq!(collect_due_notifications(&conn).expect("on").len(), 1);
+
+    conn.execute(
+        "UPDATE users SET browser_notifications = 0 WHERE id = ?",
+        rusqlite::params![user.id],
+    )
+    .expect("disable");
+    assert!(collect_due_notifications(&conn).expect("off").is_empty());
 }
 
 #[test]
