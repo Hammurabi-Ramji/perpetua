@@ -18,8 +18,8 @@ On your device, Perpetua may store:
 - Reminder preferences and local notification dedupe state
 - SQLite database files and rotated local backups
 
-**Storage location:** the operating system application data directory for
-`com.perpetua.app` (exact path varies by OS).
+**Storage location:** a `perpetua` folder in the operating system's per-user
+application data directory (Windows: `%APPDATA%\perpetua`; exact path varies by OS).
 
 **At rest:** the SQLite vault is **not encrypted at rest** in the current
 release. Protect device access accordingly; use OS disk encryption where
