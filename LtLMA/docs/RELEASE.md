@@ -109,3 +109,14 @@ attachments are preferred.
 - Quality gates: [TESTING.md](./TESTING.md)
 - Legal pack: `../legal/` (Privacy, Terms, Support)
 - Root product map: `../../README.md`
+
+## Purchase link and price (build-time env vars)
+
+The in-app upgrade modal reads these Vite variables at build time. Set them
+in the shell (or CI) before `npm run tauri build`:
+
+- `VITE_PERPETUA_BUY_URL` - the Polar checkout link for Pro. If unset or empty,
+  the Buy button renders disabled with "Purchase link unavailable - see
+  website". There is no hard-coded fallback.
+- `VITE_PERPETUA_PRO_PRICE` - displayed price text (default `$49.99`). Keep it
+  equal to the Polar product price.

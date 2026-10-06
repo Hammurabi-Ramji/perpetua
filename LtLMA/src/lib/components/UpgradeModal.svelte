@@ -2,14 +2,13 @@
 	import { activateLicense } from '$lib/api';
 	import { closePaywall, entitlement, paywallOpen } from '$lib/stores/entitlement';
 
-	// Polar.sh checkout for the Perpetua Pro lifetime deal (Merchant of Record:
-	// they handle tax/VAT/fraud and email the license key on purchase).
-	// Replace with your product's Checkout Link id from the Polar dashboard.
-	const BUY_URL = 'https://buy.polar.sh/<checkout-link-id>';
-	// One-time lifetime price. PRO_ANCHOR is the strike-through "regular" price
-	// shown next to the launch price to frame it as a deal.
-	const PRO_PRICE = '$29';
-	const PRO_ANCHOR = '$69';
+	// Polar.sh checkout link and list price are injected at build time
+	// (see docs/RELEASE.md). No hard-coded fallback URL: if unset, the buy
+	// button is disabled rather than linking somewhere dead.
+	const rawBuyUrl = import.meta.env.VITE_PERPETUA_BUY_URL as string | undefined;
+	const BUY_URL = rawBuyUrl && rawBuyUrl.trim() ? rawBuyUrl.trim() : '';
+	const PRO_PRICE =
+		((import.meta.env.VITE_PERPETUA_PRO_PRICE as string | undefined) ?? '').trim() || '$49.99';
 
 	let activationKey = '';
 	let activating = false;
@@ -60,14 +59,19 @@
 			</p>
 
 			<p class="price-line">
-				<span class="price-anchor">{PRO_ANCHOR}</span>
 				<span class="price-now">{PRO_PRICE}</span>
-				<span class="price-tag">Founder's price</span>
 			</p>
 
-			<a class="buy-button" href={BUY_URL} target="_blank" rel="noopener noreferrer">
-				Buy Pro — lifetime unlock
-			</a>
+			{#if BUY_URL}
+				<a class="buy-button" href={BUY_URL} target="_blank" rel="noopener noreferrer">
+					Buy Pro — lifetime unlock
+				</a>
+			{:else}
+				<button class="buy-button" type="button" disabled aria-disabled="true">
+					Buy Pro — lifetime unlock
+				</button>
+				<p class="muted buy-unavailable">Purchase link unavailable - see website</p>
+			{/if}
 
 			<div class="activate-block">
 				<label for="activation-key">Already have a key? Paste it to activate:</label>
@@ -135,24 +139,9 @@
 		margin: 1rem 0 0.25rem;
 	}
 
-	.price-anchor {
-		color: #9a9ab0;
-		text-decoration: line-through;
-		font-size: 1.1rem;
-	}
-
 	.price-now {
 		font-size: 2rem;
 		font-weight: 700;
-	}
-
-	.price-tag {
-		font-size: 0.8rem;
-		font-weight: 600;
-		color: #1c7a52;
-		background: rgba(40, 170, 110, 0.15);
-		padding: 0.15rem 0.5rem;
-		border-radius: 0.5rem;
 	}
 
 	.buy-button {
@@ -165,6 +154,19 @@
 		color: #fff;
 		font-weight: 600;
 		text-decoration: none;
+		border: none;
+		font: inherit;
+		font-weight: 600;
+	}
+
+	button.buy-button:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.buy-unavailable {
+		text-align: center;
+		margin: -0.75rem 0 1rem;
 	}
 
 	.activate-block {
