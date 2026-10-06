@@ -2,7 +2,8 @@
 
 **Effective date:** 2026-09-02  
 **Product:** Perpetua (local-first Lifetime License Manager desktop app)  
-**Support:** see [SUPPORT.md](./SUPPORT.md)
+**Controller:** Hammurabi Coding Company, LLC  
+**Contact:** support@hammurabi.click (see also [SUPPORT.md](./SUPPORT.md))
 
 ## Summary
 
@@ -47,6 +48,18 @@ explicitly configure and control — Perpetua has no server of its own in
 that path, and cannot decrypt what it uploads (the encryption key never
 leaves your device either, beyond the safety-net email above).
 
+## Website and purchases
+
+The Perpetua website measures aggregate page visits using an analytics
+script. The desktop app itself does not include this script and sends no
+analytics (see above).
+
+Purchases are processed by Polar.sh, which acts as merchant of record.
+Polar collects the purchaser's name, email address, and billing country, and
+handles payment and tax; Hammurabi Coding Company, LLC does not receive your
+payment card details. Polar's own privacy policy governs the data it holds.
+Refund requests go to support@hammurabi.click.
+
 ## Free tier and Pro
 
 Entitlement state (free cap vs Pro) is stored locally. Online Polar activation
@@ -59,6 +72,16 @@ is optional; offline fulfillment keys may be used without contacting Polar.
 - Decline Polar activation and remain on the free tier (3 licenses).
 - Turn off desktop reminders in Reminders settings.
 
+## Your rights and retention
+
+You may ask us for access to, or deletion of, any personal data that
+Hammurabi Coding Company, LLC holds about you (for example, purchase or
+support correspondence) by emailing support@hammurabi.click. Data held by
+Polar.sh as merchant of record is subject to Polar's policies and requests
+may need to be directed to Polar. Data in the app is stored locally and is
+under your control; you can delete it at any time by removing the app data
+directory (or using the in-app Vault tools).
+
 ## Children
 
 Perpetua is not directed at children under 13.
@@ -70,4 +93,4 @@ date in this file and, when distributed as a product update, release notes.
 
 ## Contact
 
-Privacy questions: use the contact listed in [SUPPORT.md](./SUPPORT.md).
+Privacy questions: support@hammurabi.click (Hammurabi Coding Company, LLC).
