@@ -18,7 +18,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -71,6 +71,26 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Verify release configuration
+        shell: bash
+        env:
+          POLAR_ORG_VAR: ${{ vars.POLAR_ORGANIZATION_ID }}
+          POLAR_ORG_SECRET: ${{ secrets.POLAR_ORGANIZATION_ID }}
+          PERPETUA_LICENSE_SECRET: ${{ secrets.PERPETUA_LICENSE_SECRET }}
+          VITE_PERPETUA_BUY_URL: ${{ vars.VITE_PERPETUA_BUY_URL }}
+        run: |
+          fail=0
+          if [ -z "$POLAR_ORG_VAR" ] && [ -z "$POLAR_ORG_SECRET" ]; then
+            echo "::error::POLAR_ORGANIZATION_ID is empty (set as repo variable or secret)"; fail=1
+          fi
+          if [ -z "$PERPETUA_LICENSE_SECRET" ]; then
+            echo "::error::PERPETUA_LICENSE_SECRET secret is empty"; fail=1
+          fi
+          if [ -z "$VITE_PERPETUA_BUY_URL" ]; then
+            echo "::error::VITE_PERPETUA_BUY_URL repository variable is empty"; fail=1
+          fi
+          exit $fail
+
       # tauri-action's own artifact-discovery step has a long history of
       # false-negative "No artifacts were found" failures on Linux/macOS
       # (e.g. tauri-apps/tauri-action#41, #196, #240, #561) even when the
@@ -82,10 +102,44 @@ jobs:
         env:
           # Optional: bake in Polar activation for this build. Unset = offline
           # self-issued keys only (same as a local build with no org id set).
-          POLAR_ORGANIZATION_ID: ${{ secrets.POLAR_ORGANIZATION_ID }}
+          POLAR_ORGANIZATION_ID: ${{ vars.POLAR_ORGANIZATION_ID || secrets.POLAR_ORGANIZATION_ID }}
           # Required: signs offline-issued Pro license keys. Release builds
           # fail to compile without this set (see src-tauri/src/services.rs).
           PERPETUA_LICENSE_SECRET: ${{ secrets.PERPETUA_LICENSE_SECRET }}
+          # Build-time purchase link / price shown in the app (repo variables).
+          VITE_PERPETUA_BUY_URL: ${{ vars.VITE_PERPETUA_BUY_URL }}
+          VITE_PERPETUA_PRO_PRICE: ${{ vars.VITE_PERPETUA_PRO_PRICE }}
+
+      # ---- BLD-06 (disabled by default): Windows code signing ----------------
+      # Enable by setting repo variable SIGN_WINDOWS=true and filling the
+      # placeholder variables below. No credentials are stored in this file;
+      # azure/trusted-signing-action authenticates via AZURE_* secrets
+      # (AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET) that YOU create.
+      - name: Sign Windows installers (Trusted Signing)
+        if: vars.SIGN_WINDOWS == 'true' && matrix.platform == 'windows-latest'
+        uses: azure/trusted-signing-action@v0.5.0 # TODO pin to SHA
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ vars.TRUSTED_SIGNING_ENDPOINT }}        # PLACEHOLDER e.g. https://<region>.codesigning.azure.net
+          trusted-signing-account-name: ${{ vars.TRUSTED_SIGNING_ACCOUNT }}   # PLACEHOLDER
+          certificate-profile-name: ${{ vars.TRUSTED_SIGNING_PROFILE }}       # PLACEHOLDER
+          files-folder: LtLMA/src-tauri/target/release/bundle
+          files-folder-recurse: true
+          files-folder-filter: msi,exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      # NOTE: signing after `tauri build` signs the bundles but not the inner
+      # app exe embedded in them; for full coverage use Tauri's signCommand.
+
+      # ---- BLD-06 (not implemented): macOS signing + notarization ------------
+      # Needs Apple Developer ID. Typically done by exposing these env vars to
+      # the Build step above (Tauri signs and notarizes automatically):
+      #   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
+      #   APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
+      # all from repo secrets, guarded by vars.SIGN_MACOS == 'true'.
 
       - name: Stash installers
         uses: actions/upload-artifact@v4
@@ -104,6 +158,10 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - name: Download all installers
         uses: actions/download-artifact@v4
@@ -115,8 +173,26 @@ jobs:
       - name: List collected assets
         run: ls -la dist
 
+      - name: Generate SHA256SUMS
+        run: |
+          cd dist
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2 # TODO pin to SHA
+        with:
+          subject-path: |
+            dist/**/*.msi
+            dist/**/*.exe
+            dist/**/*.dmg
+            dist/**/*.app.tar.gz
+            dist/**/*.deb
+            dist/**/*.rpm
+            dist/**/*.AppImage
+
       - name: Upload release assets
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@v3 # TODO pin to SHA
         with:
           draft: true
           prerelease: false
