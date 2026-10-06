@@ -50,7 +50,10 @@ fn load_dataset() -> VendorPolicyDataset {
         .join("perpetua")
         .join("vendor-policies.json");
     if let Ok(text) = std::fs::read_to_string(&override_path) {
-        if let Ok(parsed) = serde_json::from_str::<VendorPolicyDataset>(&text) {
+        if let Ok(mut parsed) = serde_json::from_str::<VendorPolicyDataset>(&text) {
+            parsed
+                .policies
+                .retain(|p| (1..=3650).contains(&p.keepalive_days));
             return parsed;
         }
     }

@@ -299,7 +299,19 @@ fn spawn_reminder_scheduler(handle: tauri::AppHandle) {
             let notices = {
                 let state = handle.state::<AppState>();
                 let conn = state.db.lock().await;
-                services::collect_due_notifications(&conn).unwrap_or_default()
+                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    services::collect_due_notifications(&conn)
+                })) {
+                    Ok(Ok(n)) => n,
+                    Ok(Err(e)) => {
+                        eprintln!("reminder scheduler: collect failed: {e}");
+                        Vec::new()
+                    }
+                    Err(_) => {
+                        eprintln!("reminder scheduler: collect panicked; continuing");
+                        Vec::new()
+                    }
+                }
             };
 
             for notice in notices {

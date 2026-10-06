@@ -42,6 +42,30 @@ fn sample_license(product_name: &str, expiry_date: Option<&str>) -> LicensePaylo
 }
 
 #[test]
+fn keepalive_days_out_of_range_is_rejected_and_stored_bad_rows_do_not_panic() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let user = create_user(&conn, "keepalive@example.com", "password123").expect("user");
+
+    for days in [3651_i64, 99_999_999_999_i64] {
+        let mut payload = sample_license("Too Long", None);
+        payload.keepalive_days = Some(days);
+        assert!(add_license(&conn, user.id, payload).is_err());
+    }
+
+    conn.execute(
+        "INSERT INTO licenses (user_id, product_name, license_key, purchase_date, status,
+            action_required, created_at, updated_at, keepalive_days)
+         VALUES (?, 'Bad Row', 'BAD-KEY', '2026-01-01', 'active', 0, '2026-01-01', '2026-01-01', 99999999999)",
+        rusqlite::params![user.id],
+    )
+    .expect("insert bad row");
+
+    let _ = get_reminder_items(&conn, user.id).expect("reminders do not fail");
+    let _ = collect_due_notifications(&conn).expect("notifications do not fail");
+}
+
+#[test]
 fn services_persist_auth_and_license_crud() {
     let temp = tempdir().expect("temp dir");
     let conn = init_db_at(temp.path()).expect("db");

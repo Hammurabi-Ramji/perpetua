@@ -146,6 +146,12 @@ fn sanitize_license_payload(payload: LicensePayload) -> Result<LicensePayload> {
         last_active: normalize_optional(payload.last_active),
     };
 
+    if let Some(days) = sanitized.keepalive_days {
+        if days > 3650 {
+            return Err(anyhow!("keepalive_days must be between 1 and 3650"));
+        }
+    }
+
     if sanitized.product_name.is_empty() {
         return Err(anyhow!("product_name is required"));
     }
@@ -762,11 +768,20 @@ pub fn get_reminder_items(conn: &Connection, user_id: i64) -> Result<Vec<Reminde
                 .or(license.purchase_date.as_ref())
                 .and_then(|date| chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").ok());
             if let Some(base) = baseline {
-                let revoke = base + chrono::Duration::days(days);
+                // Stored rows may hold out-of-range values; skip on overflow.
+                let lead = std::cmp::max(KEEPALIVE_LEAD_FLOOR_DAYS, days / 4);
+                let dates = chrono::Duration::try_days(days)
+                    .and_then(|d| base.checked_add_signed(d))
+                    .and_then(|revoke| {
+                        chrono::Duration::try_days(lead)
+                            .and_then(|l| revoke.checked_sub_signed(l))
+                            .map(|maintain_by| (revoke, maintain_by))
+                    });
+                let Some((revoke, maintain_by)) = dates else {
+                    continue;
+                };
                 // Target a maintain-by date ahead of the real revocation so the
                 // login always lands with a safety margin.
-                let lead = std::cmp::max(KEEPALIVE_LEAD_FLOOR_DAYS, days / 4);
-                let maintain_by = revoke - chrono::Duration::days(lead);
                 if maintain_by <= reminder_window {
                     items.push(ReminderItem {
                         license_id: license.id,
