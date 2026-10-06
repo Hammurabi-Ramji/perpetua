@@ -15,7 +15,11 @@ pub async fn send_email(settings: &AccountRecoverySettings, to: &str, subject: &
         .as_deref()
         .filter(|v| !v.trim().is_empty())
         .ok_or_else(|| anyhow!("SMTP relay isn't configured yet — set it under Reminders \u{2192} Backup email & account recovery."))?;
-    let port = settings.smtp_port.unwrap_or(587) as u16;
+    let raw_port = settings.smtp_port.unwrap_or(587);
+    let port = u16::try_from(raw_port)
+        .ok()
+        .filter(|p| *p >= 1)
+        .ok_or_else(|| anyhow!("SMTP port {raw_port} is invalid — it must be between 1 and 65535."))?;
     let username = settings.smtp_username.clone().unwrap_or_default();
     let password = settings.smtp_password.clone().unwrap_or_default();
     let from = settings
@@ -35,8 +39,15 @@ pub async fn send_email(settings: &AccountRecoverySettings, to: &str, subject: &
         .header(ContentType::TEXT_PLAIN)
         .body(body.to_string())?;
 
-    let transport = AsyncSmtpTransport::<Tokio1Executor>::relay(host)?
+    // 465 = implicit TLS (SMTPS); 587 and anything else = STARTTLS upgrade.
+    let builder = if port == 465 {
+        AsyncSmtpTransport::<Tokio1Executor>::relay(host)?
+    } else {
+        AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(host)?
+    };
+    let transport = builder
         .port(port)
+        .timeout(Some(std::time::Duration::from_secs(20)))
         .credentials(Credentials::new(username, password))
         .build();
 

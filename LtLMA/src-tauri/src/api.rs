@@ -25,7 +25,7 @@ use crate::services::{
     get_license_stats, get_licenses, get_reminder_items, get_reminder_settings, get_user_by_email,
     get_user_by_id, import_licenses_csv, import_licenses_json, list_backups, list_site_connections,
     list_vault_members, mark_license_active, mark_onboarding_complete, mark_pro_activated,
-    prepare_cloud_sync, prepare_invite, prepare_password_reset, record_cloud_sync_result,
+    prepare_cloud_sync, prepare_invite, prepare_password_reset, prepare_test_email, record_cloud_sync_result,
     redeem_invite, resolve_data_owner_id, restore_vault_from_bytes, update_account_recovery_settings,
     update_license, update_reminder_settings, validate_credentials, verify_jwt, FreeLimitReached,
 };
@@ -107,6 +107,7 @@ pub(crate) fn build_router(db: Arc<Mutex<Connection>>, jwt_secret: Arc<String>) 
         .route("/api/auth/forgot-password", post(forgot_password_route))
         .route("/api/auth/reset-password", post(reset_password_route))
         .route("/api/account/recovery", get(get_recovery_route).patch(update_recovery_route))
+        .route("/api/account/recovery/test-email", post(test_recovery_email_route))
         .route("/api/sharing/invite", post(invite_member_route))
         .route("/api/sharing/redeem", post(redeem_invite_route))
         .route("/api/sharing/members", get(list_members_route))
@@ -470,6 +471,37 @@ async fn update_recovery_route(
     match update_account_recovery_settings(&conn, user.id, payload) {
         Ok(settings) => success(settings),
         Err(_) => failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to update recovery settings"),
+    }
+}
+
+async fn test_recovery_email_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+
+    let prepared = {
+        let conn = db.lock().await;
+        prepare_test_email(&conn, user.id)
+    };
+    let (mail_settings, to) = match prepared {
+        Ok(prepared) => prepared,
+        Err(error) => return failure(StatusCode::BAD_REQUEST, &error.to_string()),
+    };
+
+    match crate::mail::send_email(
+        &mail_settings,
+        &to,
+        "Perpetua test email",
+        "This is a test email from Perpetua. Your SMTP relay is working.",
+    )
+    .await
+    {
+        Ok(_) => success(json!({ "sent": true })),
+        Err(error) => failure(StatusCode::BAD_REQUEST, &error.to_string()),
     }
 }
 
