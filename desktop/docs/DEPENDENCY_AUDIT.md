@@ -30,9 +30,18 @@ the `unic-*` crates (transitive, via Tauri's build tooling); unsound `anyhow`,
 | `browser-extension/` | 0 | 9 -> 3 (2 critical, 1 moderate) |
 | `polar-webhook/` | 0 | 4 -> 3 (high) |
 
-The remaining dev-only advisories need `npm audit fix --force` (breaking
-major bumps of build and test tooling), so they are left for a deliberate
-upgrade. Run `npm audit` (without `--omit=dev`) for the detail.
+`npm audit fix --force` was then tried on all three (2026-10-07):
+
+- `browser-extension/`: vitest 3 -> 5 clears everything (0 advisories); tests
+  19/19. **Kept.**
+- `desktop/`: **rejected.** It jumps Svelte 4 -> 5, SvelteKit 2 -> 3, Vite 5 ->
+  8 and `vite build` fails (`svelte.config.js` is no longer read in SvelteKit
+  3). It would also still leave 18 dev advisories. Treat it as a planned
+  framework migration, not an audit fix. Dev-only advisories remain (34), none
+  in production dependencies or in anything shipped.
+- `polar-webhook/`: **rejected.** `--force` rewrote `wrangler` to `^4.15.2`
+  (a downgrade of the declared range) and still left 6 dev advisories (miniflare
+  / `ws`, dev tooling only). Revisit when a newer `wrangler` patches them.
 
 ## Known test-environment issue (not a dependency problem)
 
