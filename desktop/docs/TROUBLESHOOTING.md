@@ -122,6 +122,6 @@ are pruned automatically, which is expected, not a failure.
 
 ## Still stuck?
 
-Email <support@hammurabi.click> with your Perpetua version (Help → About,
+Email <hcc@hammurabicodingcompany.com> with your Perpetua version (Help → About,
 or `perpetua config` from a terminal), the diagnostics log, and what you
 were doing when it happened.

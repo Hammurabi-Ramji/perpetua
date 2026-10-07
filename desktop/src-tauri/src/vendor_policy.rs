@@ -35,6 +35,11 @@ pub struct VendorPolicy {
     #[serde(default)]
     pub note: Option<String>,
     pub source: String,
+    /// Page the `source` sentence was read from. Only `https://` URLs are
+    /// shown; anything else is dropped so a drop-in override file cannot
+    /// inject a script URL into the form.
+    #[serde(default)]
+    pub source_url: Option<String>,
     pub last_verified: String,
     pub confidence: String,
 }
@@ -50,6 +55,7 @@ pub struct VendorPolicySuggestion {
     pub vendor: Option<String>,
     pub confidence: Option<String>,
     pub source: Option<String>,
+    pub source_url: Option<String>,
     pub last_verified: Option<String>,
     pub policy_id: Option<String>,
     pub dataset_version: u32,
@@ -122,6 +128,7 @@ pub fn suggest_keepalive(
             vendor: None,
             confidence: None,
             source: None,
+            source_url: None,
             last_verified: None,
             policy_id: None,
             dataset_version: data.version,
@@ -167,11 +174,22 @@ pub fn suggest_keepalive(
         vendor: None,
         confidence: None,
         source: None,
+        source_url: None,
         last_verified: None,
         policy_id: None,
         dataset_version: data.version,
         message: "unknown — set keep-alive days manually".to_string(),
     }
+}
+
+/// Keep only an `https://` URL with no whitespace. `None` otherwise.
+fn https_source_url(raw: Option<&str>) -> Option<String> {
+    let url = raw?.trim();
+    let rest = url.strip_prefix("https://")?;
+    if rest.is_empty() || url.chars().any(char::is_whitespace) || url.contains('<') {
+        return None;
+    }
+    Some(url.to_string())
 }
 
 fn suggestion_from(policy: &VendorPolicy, dataset_version: u32) -> VendorPolicySuggestion {
@@ -181,6 +199,7 @@ fn suggestion_from(policy: &VendorPolicy, dataset_version: u32) -> VendorPolicyS
         vendor: Some(policy.vendor.clone()),
         confidence: Some(policy.confidence.clone()),
         source: Some(policy.source.clone()),
+        source_url: https_source_url(policy.source_url.as_deref()),
         last_verified: Some(policy.last_verified.clone()),
         policy_id: Some(policy.id.clone()),
         dataset_version,
@@ -306,5 +325,39 @@ mod tests {
         let parsed: VendorPolicyDataset = serde_json::from_str(json).unwrap();
         assert!(parsed.policies[0].keepalive_days.is_none());
         assert_eq!(parsed.policies[0].kind, "marketplace");
+        assert!(parsed.policies[0].source_url.is_none());
+    }
+
+    #[test]
+    fn cited_policies_carry_https_source_urls() {
+        let live = suggest_keepalive(None, Some("LiveAgent"));
+        assert_eq!(
+            live.source_url.as_deref(),
+            Some("https://support.liveagent.com/701120-Account-inactivity-and-suspension")
+        );
+        let cloud = suggest_keepalive(None, Some("pCloud Lifetime"));
+        assert_eq!(
+            cloud.source_url.as_deref(),
+            Some("https://help.pcloud.com/article/account-inactivity")
+        );
+        let appsumo = suggest_keepalive(Some("AppSumo"), None);
+        assert_eq!(
+            appsumo.source_url.as_deref(),
+            Some("https://appsumo.com/terms-of-use/")
+        );
+    }
+
+    #[test]
+    fn non_https_source_url_is_dropped() {
+        assert!(https_source_url(Some("javascript:alert(1)")).is_none());
+        assert!(https_source_url(Some("http://example.com/policy")).is_none());
+        assert!(https_source_url(Some("https://evil.example/a b")).is_none());
+        assert_eq!(
+            https_source_url(Some(
+                "  https://help.pcloud.com/article/account-inactivity  "
+            ))
+            .as_deref(),
+            Some("https://help.pcloud.com/article/account-inactivity")
+        );
     }
 }

@@ -166,9 +166,10 @@ into Perpetua and copy a fresh one.
 
 ## Upgrading to Pro
 
-The free tier stores up to 3 licenses. **Unlock unlimited** opens the upgrade
-flow — either a Polar-hosted purchase (if configured) or an offline license
-key you can activate directly.
+The free tier stores up to 3 licenses. Pro is a single purchase: pay once and
+the license cap stays off. It is not a subscription, and it does not include
+a lifetime support plan. **Unlock unlimited** opens a Polar checkout when this
+build has a checkout link, or you can activate an offline license key.
 
 ## Troubleshooting
 

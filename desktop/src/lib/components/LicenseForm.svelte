@@ -225,7 +225,16 @@
 		<p class="policy-hint">
 			{suggestion.message}
 			{#if suggestion.matched && suggestion.source}
-				<span class="muted small"> Source: {suggestion.source}.</span>
+				<span class="muted small">
+					Source:
+					{#if suggestion.source_url}
+						<a href={suggestion.source_url} target="_blank" rel="noopener noreferrer"
+							>{suggestion.source}</a
+						>.
+					{:else}
+						{suggestion.source}.
+					{/if}
+				</span>
 			{/if}
 			{#if suggestion.matched && suggestion.keepalive_days != null}
 				<button type="button" class="linkish" on:click={applySuggestion}>Apply suggestion</button>
@@ -268,6 +277,9 @@
 	}
 	.small {
 		font-size: 0.85em;
+	}
+	.policy-hint a {
+		color: inherit;
 	}
 	.linkish {
 		display: inline;

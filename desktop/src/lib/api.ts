@@ -345,6 +345,7 @@ export type VendorPolicySuggestion = {
   vendor: string | null;
   confidence: string | null;
   source: string | null;
+  source_url: string | null;
   last_verified: string | null;
   policy_id: string | null;
   dataset_version: number;

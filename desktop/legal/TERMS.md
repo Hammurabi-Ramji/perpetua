@@ -1,6 +1,6 @@
 # Perpetua — Terms of Use / EULA
 
-**Effective date:** 2026-07-19  
+**Effective date:** 2026-10-07  
 **Product:** Perpetua desktop application  
 **Licensor:** Hammurabi Coding Company, LLC (“we”, “us”)
 
@@ -19,8 +19,13 @@ Perpetua on devices you control for managing your own software licenses.
 
 - Free tier: up to three (3) license records, unless we publish a different
   limit.
-- Pro: unlocks the free-tier cap and any Pro features marked as available in
-  the product. Future “Auto-Maintain” automation is **not** included unless
+- Pro: a single purchase. It removes the free-tier cap and unlocks Pro
+  features that are actually available in the product. The Pro entitlement
+  does not expire and is not a subscription.
+- “Lifetime” in the product name and in marketing means two things only: the
+  third-party deals you store, and that Pro is paid once rather than
+  subscribed. It does not mean lifetime support.
+- Future “Auto-Maintain” automation is **not** included unless
   explicitly sold and enabled.
 
 ## 4. Your responsibilities
@@ -71,6 +76,13 @@ These Terms are governed by the laws applicable to the licensor’s principal
 place of business, without regard to conflict-of-law rules, unless mandatory
 consumer protections in your jurisdiction require otherwise.
 
-## 11. Contact
+## 11. Support
+
+A purchase is a software license. It does not include a support plan, a
+support term, or lifetime support. You may email the mailbox in
+[SUPPORT.md](./SUPPORT.md). We may reply when we are able. We do not promise
+a response time, ongoing maintenance, or future versions.
+
+## 12. Contact
 
 See [SUPPORT.md](./SUPPORT.md).

@@ -6,13 +6,19 @@
 | Publisher | Hammurabi Coding Company, LLC |
 | Package id | `com.perpetua.app` |
 | Version (in-tree) | 1.0.0 |
-| Support email | support@hammurabi.click |
-| Legal / privacy | support@hammurabi.click (subject line: "Privacy") |
+| Support email | hcc@hammurabicodingcompany.com |
+| Legal / privacy | hcc@hammurabicodingcompany.com (subject line: "Privacy") |
 | Product page | <https://perpetua.hammurabi.click> |
 | Docs | `desktop/README.md`, `desktop/docs/USER_GUIDE.md`, `desktop/docs/TROUBLESHOOTING.md` |
 
 Only one mailbox is listed on purpose: it is the one that is monitored. Do
 not add a second address here unless it is also actually read.
+
+## What a purchase includes
+
+Pro is a one-time software license. It is not a subscription, and it does
+not include lifetime support or a support contract. This page explains how
+to reach us. It does not promise a reply, a response time, or future updates.
 
 ## Before contacting support
 
