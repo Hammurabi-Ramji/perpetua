@@ -3,7 +3,7 @@
 	import { BUY_URL, CHECKOUT_CONFIGURED, PRO_PRICE } from '$lib/commerce';
 	import { closePaywall, entitlement, paywallOpen } from '$lib/stores/entitlement';
 
-	// Polar.sh is the Merchant of Record for the Pro lifetime unlock (they
+	// Polar.sh is the Merchant of Record for the one-time Pro license (they
 	// handle tax/VAT/fraud and email the license key on purchase). The checkout
 	// link and price come from build-time config — see src/lib/commerce.ts.
 	// There is deliberately no struck-through "regular" price: a reference
@@ -54,7 +54,7 @@
 			<h3>Unlock Perpetua Pro</h3>
 			<p class="muted">
 				The free plan stores up to {limit} licenses. Pro is a one-time purchase — pay once, store
-				unlimited licenses forever. No subscription, all local.
+				unlimited licenses. No subscription. This is a software license, not a support plan.
 			</p>
 
 			<p class="price-line">
@@ -66,7 +66,7 @@
 			</p>
 
 			<a class="buy-button" href={BUY_URL} target="_blank" rel="noopener noreferrer">
-				{CHECKOUT_CONFIGURED ? 'Buy Pro — lifetime unlock' : 'Get Pro on the Perpetua website'}
+				{CHECKOUT_CONFIGURED ? 'Buy Pro — one-time license' : 'Get Pro on the Perpetua website'}
 			</a>
 
 			<div class="activate-block">

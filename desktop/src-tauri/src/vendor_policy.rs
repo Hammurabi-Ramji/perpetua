@@ -23,10 +23,29 @@ pub struct VendorPolicy {
     pub aliases: Vec<String>,
     #[serde(default)]
     pub product_hints: Vec<String>,
-    pub keepalive_days: i64,
+    /// Days of inactivity the vendor tolerates. `None` means the vendor
+    /// publishes no inactivity requirement for this plan (see `note`).
+    #[serde(default)]
+    pub keepalive_days: Option<i64>,
+    /// `vendor` (a product's own policy), `marketplace` (default window only),
+    /// or `fallback` (weak generic hint, matched last).
+    #[serde(default = "default_kind")]
+    pub kind: String,
+    /// Plan-specific nuance shown with the suggestion.
+    #[serde(default)]
+    pub note: Option<String>,
     pub source: String,
+    /// Page the `source` sentence was read from. Only `https://` URLs are
+    /// shown; anything else is dropped so a drop-in override file cannot
+    /// inject a script URL into the form.
+    #[serde(default)]
+    pub source_url: Option<String>,
     pub last_verified: String,
     pub confidence: String,
+}
+
+fn default_kind() -> String {
+    "marketplace".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +55,7 @@ pub struct VendorPolicySuggestion {
     pub vendor: Option<String>,
     pub confidence: Option<String>,
     pub source: Option<String>,
+    pub source_url: Option<String>,
     pub last_verified: Option<String>,
     pub policy_id: Option<String>,
     pub dataset_version: u32,
@@ -80,7 +100,19 @@ fn has_phrase(haystack: &str, needle: &str) -> bool {
     !needle.is_empty() && format!(" {haystack} ").contains(&format!(" {needle} "))
 }
 
-/// Match against aliases (source_site) first, then product_name hints.
+fn is_fallback(policy: &VendorPolicy) -> bool {
+    policy.kind == "fallback" || policy.id == "generic-saas-90"
+}
+
+fn hint_matches(policy: &VendorPolicy, product: &str) -> bool {
+    policy
+        .product_hints
+        .iter()
+        .any(|hint| has_phrase(product, &normalize(hint)))
+}
+
+/// Match order: a product's own vendor policy (by product name), then the
+/// marketplace/vendor alias on source_site, then weaker generic hints.
 pub fn suggest_keepalive(
     source_site: Option<&str>,
     product_name: Option<&str>,
@@ -96,6 +128,7 @@ pub fn suggest_keepalive(
             vendor: None,
             confidence: None,
             source: None,
+            source_url: None,
             last_verified: None,
             policy_id: None,
             dataset_version: data.version,
@@ -103,14 +136,25 @@ pub fn suggest_keepalive(
         };
     }
 
-    // Prefer exact/alias match on source_site.
+    // A product's own vendor policy beats the marketplace it was bought on.
+    if !product.is_empty() {
+        if let Some(policy) = data
+            .policies
+            .iter()
+            .find(|p| p.kind == "vendor" && hint_matches(p, &product))
+        {
+            return suggestion_from(policy, data.version);
+        }
+    }
+
+    // Alias match on source_site.
     if !site.is_empty() {
         for policy in &data.policies {
             let aliases: Vec<String> = policy.aliases.iter().map(|a| normalize(a)).collect();
             if aliases
                 .iter()
                 .any(|a| has_phrase(&site, a) || (site.len() >= 3 && has_phrase(a, &site)))
-                && policy.id != "generic-saas-90"
+                && !is_fallback(policy)
             {
                 return suggestion_from(policy, data.version);
             }
@@ -119,13 +163,8 @@ pub fn suggest_keepalive(
 
     // Product-name hints (weaker).
     if !product.is_empty() {
-        for policy in &data.policies {
-            for hint in &policy.product_hints {
-                let h = normalize(hint);
-                if has_phrase(&product, &h) {
-                    return suggestion_from(policy, data.version);
-                }
-            }
+        if let Some(policy) = data.policies.iter().find(|p| hint_matches(p, &product)) {
+            return suggestion_from(policy, data.version);
         }
     }
 
@@ -135,6 +174,7 @@ pub fn suggest_keepalive(
         vendor: None,
         confidence: None,
         source: None,
+        source_url: None,
         last_verified: None,
         policy_id: None,
         dataset_version: data.version,
@@ -142,20 +182,43 @@ pub fn suggest_keepalive(
     }
 }
 
+/// Keep only an `https://` URL with no whitespace. `None` otherwise.
+fn https_source_url(raw: Option<&str>) -> Option<String> {
+    let url = raw?.trim();
+    let rest = url.strip_prefix("https://")?;
+    if rest.is_empty() || url.chars().any(char::is_whitespace) || url.contains('<') {
+        return None;
+    }
+    Some(url.to_string())
+}
+
 fn suggestion_from(policy: &VendorPolicy, dataset_version: u32) -> VendorPolicySuggestion {
     VendorPolicySuggestion {
         matched: true,
-        keepalive_days: Some(policy.keepalive_days),
+        keepalive_days: policy.keepalive_days,
         vendor: Some(policy.vendor.clone()),
         confidence: Some(policy.confidence.clone()),
         source: Some(policy.source.clone()),
+        source_url: https_source_url(policy.source_url.as_deref()),
         last_verified: Some(policy.last_verified.clone()),
         policy_id: Some(policy.id.clone()),
         dataset_version,
-        message: format!(
-            "Suggested {} days for {} (confidence: {}; verified {}). Override anytime.",
-            policy.keepalive_days, policy.vendor, policy.confidence, policy.last_verified
-        ),
+        message: match (policy.keepalive_days, policy.note.as_deref()) {
+            (Some(days), note) => format!(
+                "Suggested {days} days for {} (confidence: {}; verified {}).{} Override anytime.",
+                policy.vendor,
+                policy.confidence,
+                policy.last_verified,
+                note.map(|n| format!(" {n}")).unwrap_or_default()
+            ),
+            (None, note) => format!(
+                "{} publishes no inactivity requirement for this plan (confidence: {}; verified {}).{} Leave blank unless you want your own reminder.",
+                policy.vendor,
+                policy.confidence,
+                policy.last_verified,
+                note.map(|n| format!(" {n}")).unwrap_or_default()
+            ),
+        },
     }
 }
 
@@ -230,5 +293,71 @@ mod tests {
     #[test]
     fn product_hint_requires_whole_word() {
         assert!(!suggest_keepalive(None, Some("Peltdown Pro")).matched);
+    }
+
+    #[test]
+    fn vendor_policy_beats_marketplace_it_was_bought_on() {
+        let s = suggest_keepalive(Some("AppSumo"), Some("LiveAgent Lifetime"));
+        assert_eq!(s.policy_id.as_deref(), Some("liveagent"));
+        assert!(s.keepalive_days.is_none());
+        assert!(s.message.contains("no inactivity requirement"));
+    }
+
+    #[test]
+    fn no_requirement_vendor_returns_no_days() {
+        let s = suggest_keepalive(None, Some("pCloud Lifetime 2TB"));
+        assert_eq!(s.policy_id.as_deref(), Some("pcloud"));
+        assert!(s.matched);
+        assert!(s.keepalive_days.is_none());
+        assert_eq!(s.confidence.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn fallback_never_wins_over_marketplace() {
+        let s = suggest_keepalive(Some("AppSumo"), Some("Cool LTD Suite"));
+        assert_eq!(s.policy_id.as_deref(), Some("appsumo"));
+    }
+
+    #[test]
+    fn missing_days_in_user_override_file_parses() {
+        let json = r#"{"version":9,"updated":"x","policies":[{"id":"v","vendor":"V",
+            "aliases":["v"],"source":"s","last_verified":"d","confidence":"low"}]}"#;
+        let parsed: VendorPolicyDataset = serde_json::from_str(json).unwrap();
+        assert!(parsed.policies[0].keepalive_days.is_none());
+        assert_eq!(parsed.policies[0].kind, "marketplace");
+        assert!(parsed.policies[0].source_url.is_none());
+    }
+
+    #[test]
+    fn cited_policies_carry_https_source_urls() {
+        let live = suggest_keepalive(None, Some("LiveAgent"));
+        assert_eq!(
+            live.source_url.as_deref(),
+            Some("https://support.liveagent.com/701120-Account-inactivity-and-suspension")
+        );
+        let cloud = suggest_keepalive(None, Some("pCloud Lifetime"));
+        assert_eq!(
+            cloud.source_url.as_deref(),
+            Some("https://help.pcloud.com/article/account-inactivity")
+        );
+        let appsumo = suggest_keepalive(Some("AppSumo"), None);
+        assert_eq!(
+            appsumo.source_url.as_deref(),
+            Some("https://appsumo.com/terms-of-use/")
+        );
+    }
+
+    #[test]
+    fn non_https_source_url_is_dropped() {
+        assert!(https_source_url(Some("javascript:alert(1)")).is_none());
+        assert!(https_source_url(Some("http://example.com/policy")).is_none());
+        assert!(https_source_url(Some("https://evil.example/a b")).is_none());
+        assert_eq!(
+            https_source_url(Some(
+                "  https://help.pcloud.com/article/account-inactivity  "
+            ))
+            .as_deref(),
+            Some("https://help.pcloud.com/article/account-inactivity")
+        );
     }
 }

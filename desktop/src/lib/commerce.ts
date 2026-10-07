@@ -10,7 +10,7 @@ function env(name: string): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
-/** Polar checkout link for the Pro lifetime unlock. `undefined` = not configured for this build. */
+/** Polar checkout link for the one-time Pro license. `undefined` = not configured for this build. */
 export const CHECKOUT_URL: string | undefined = (() => {
   const url = env("VITE_PERPETUA_CHECKOUT_URL");
   // The placeholder that used to live in the component must never ship.
@@ -27,7 +27,7 @@ export const PRODUCT_URL: string =
 
 /** Support mailbox shown in-app. Keep in sync with legal/SUPPORT.md. */
 export const SUPPORT_EMAIL: string =
-  env("VITE_PERPETUA_SUPPORT_EMAIL") ?? "support@hammurabi.click";
+  env("VITE_PERPETUA_SUPPORT_EMAIL") ?? "hcc@hammurabicodingcompany.com";
 
 /** Where the "Buy" button should send the user. Falls back to the product page. */
 export const BUY_URL: string = CHECKOUT_URL ?? PRODUCT_URL;

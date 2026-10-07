@@ -61,7 +61,7 @@ cd polar-webhook;     npm test; npm run typecheck; cd ..
 - [`desktop/docs/USER_GUIDE.md`](./desktop/docs/USER_GUIDE.md) — features, walkthroughs
 - [`desktop/docs/TROUBLESHOOTING.md`](./desktop/docs/TROUBLESHOOTING.md) — common issues
 - [`desktop/docs/STATUS.md`](./desktop/docs/STATUS.md) — what works, what doesn't yet, what's next
-- Support: `support@hammurabi.click` ([`desktop/legal/SUPPORT.md`](./desktop/legal/SUPPORT.md))
+- Support mailbox: `hcc@hammurabicodingcompany.com` ([`desktop/legal/SUPPORT.md`](./desktop/legal/SUPPORT.md)). A purchase is a one-time software license, not a lifetime support plan ([`desktop/legal/TERMS.md`](./desktop/legal/TERMS.md)).
 
 ## Legal
 

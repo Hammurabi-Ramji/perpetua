@@ -3,7 +3,7 @@
 **Effective date:** 2026-10-06  
 **Product:** Perpetua (local-first Lifetime License Manager desktop app)  
 **Data controller:** Hammurabi Coding Company, LLC  
-**Contact:** support@hammurabi.click (see [SUPPORT.md](./SUPPORT.md))
+**Contact:** hcc@hammurabicodingcompany.com (see [SUPPORT.md](./SUPPORT.md))
 
 ## Summary
 
@@ -59,8 +59,8 @@ never leaves your device either, beyond the safety-net email above).
 Pro is sold by Polar.sh acting as Merchant of Record. When you buy, Polar
 collects the payment, billing and contact details it needs under its own
 privacy policy, and shares with us the order record (order id, product,
-amount, and the email the key was sent to) so we can provide support and
-honour refunds. Our purchase-notification service logs order and customer
+amount, and the email the key was sent to) so we can answer a support
+request or a refund under the Terms. Our purchase-notification service logs order and customer
 identifiers only, not names, emails or addresses. We do not receive card
 numbers.
 
@@ -100,5 +100,5 @@ date in this file and, when distributed as a product update, release notes.
 
 ## Contact
 
-Privacy questions: support@hammurabi.click with "Privacy" in the subject
+Privacy questions: hcc@hammurabicodingcompany.com with "Privacy" in the subject
 line.
