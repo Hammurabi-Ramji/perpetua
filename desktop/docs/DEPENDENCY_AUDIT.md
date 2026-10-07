@@ -21,17 +21,24 @@ parent crates to move. Also reported as warnings: unmaintained
 `proc-macro-error` and the `unic-*` crates; unsound `anyhow`,
 `event-listener`, `glib`.
 
-## npm, production dependencies only
+## npm: production dependencies are clean
 
-| Package | Advisories |
-|---|---|
-| `desktop/` | 5 (postcss, nanoid, source-map-js, browserslist: high; baseline-browser-mapping: moderate). All build-time tooling reached through the frontend build, with a fix available via `npm audit fix`. |
-| `browser-extension/` | 0 (9 in dev dependencies: 2 critical, 5 high) |
-| `polar-webhook/` | 0 (4 high in dev dependencies) |
+`npm audit fix` (non-breaking) was applied to all three packages on
+2026-10-07, which cleared every production advisory:
 
-Run `npm audit` (without `--omit=dev`) for the dev-dependency detail.
+| Package | Production | Dev (was -> now) |
+|---|---|---|
+| `desktop/` | 0 (was 5) | 41 -> 34 (2 critical, 16 high remain) |
+| `browser-extension/` | 0 | 9 -> 3 (2 critical, 1 moderate) |
+| `polar-webhook/` | 0 | 4 -> 3 (high) |
+
+The remaining dev-only advisories need `npm audit fix --force` (breaking
+major bumps of build and test tooling), so they are left for a deliberate
+upgrade. Run `npm audit` (without `--omit=dev`) for the detail.
 
 ## Next step
 
-One follow-up PR: patch-bump `quinn-proto` and `rustls`, run `npm audit fix` in
-the three packages, re-run the full test matrix, then make the job blocking.
+Patch-bump `quinn-proto` and `rustls` and move `quick-xml`'s parents (the 6
+Rust advisories), re-run the full test matrix, then make the job blocking. The
+job already gates on production npm dependencies only (`--omit=dev`), which are
+clean.
