@@ -47,13 +47,17 @@ also builds — CI builds both targets.
    change; extension token should be a scoped, shorter-lived credential.
 3. **Sharing: leave/remove member + cap at one** (SEC-08).
 4. **Per-code attempt counter** for reset/invite codes (SEC-05 residual).
-5. **Pin GitHub Actions to SHAs**, enable Dependabot, add `cargo audit` /
-   `npm audit` jobs (BLD-01, BLD-05).
-6. **Branch protection + CODEOWNERS + SECURITY.md** (BLD-03, LEG-06).
+5. ~~Pin GitHub Actions to SHAs, enable Dependabot, add `cargo audit` /
+   `npm audit` jobs~~ (BLD-01, BLD-05) — done in the CI-hardening PR; the
+   audit job is **report-only** until the baseline in
+   `desktop/docs/DEPENDENCY_AUDIT.md` (6 Rust advisories, 5 npm) is fixed.
+6. **Branch protection** (BLD-03) — owner action in GitHub settings; CODEOWNERS
+   and `SECURITY.md` (LEG-06) are now in the repo.
 7. **Playwright E2E in CI** against the release binary with per-spec databases
    (QA-04).
-8. **Third-party licence notices** for Tesseract / traineddata / Rust crates
-   (LEG-04).
+8. **Third-party licence notices** (LEG-04) — inventory generated in
+   `desktop/legal/THIRD-PARTY-NOTICES.md`; still to do: ship the full licence
+   texts with the installer and review the 5 MPL-2.0 crates.
 
 ### P2 — quality and product
 
