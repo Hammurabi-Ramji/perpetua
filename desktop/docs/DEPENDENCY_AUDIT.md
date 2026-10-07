@@ -3,22 +3,20 @@
 The `dependency-audit` job in `.github/workflows/perpetua-ci.yml` runs
 `npm audit --omit=dev --audit-level=high` for `desktop/`, `browser-extension/`
 and `polar-webhook/`, plus `cargo audit` for `desktop/src-tauri`, on every PR
-and weekly. It is **report-only** (`continue-on-error: true`) because the
-baseline below is not clean. Flip it to blocking once these are resolved.
+and weekly. It **blocks**: the baseline is clean as of 2026-10-07. `cargo
+audit` fails only on vulnerabilities; the unmaintained/unsound warnings below
+are informational.
 
-## Rust (`cargo audit`): 6 advisories
+## Rust (`cargo audit`): 0 vulnerabilities
 
-| Advisory | Crate | Locked | Fixed in |
-|---|---|---|---|
-| RUSTSEC-2026-0194 (quadratic duplicate-attribute check) | quick-xml | 0.37.5 and 0.39.4 | >= 0.41.0 |
-| RUSTSEC-2026-0195 (unbounded namespace allocation, DoS) | quick-xml | 0.37.5 and 0.39.4 | >= 0.41.0 |
-| RUSTSEC-2026-0185 (remote memory exhaustion) | quinn-proto | 0.11.14 | >= 0.11.15 |
-| RUSTSEC-2026-0285 (TLS 1.3 handshake accepted across encryption levels) | rustls | 0.23.40 | >= 0.23.45 |
+On 2026-10-07 the lockfile had 6 advisories: `quick-xml` 0.37.5 and 0.39.4
+(RUSTSEC-2026-0194, -0195), `quinn-proto` 0.11.14 (RUSTSEC-2026-0185) and
+`rustls` 0.23.40 (RUSTSEC-2026-0285). `cargo update -p quinn-proto -p rustls -p
+tauri-winrt-notification -p plist -p notify-rust` cleared all of them
+(semver-compatible; `Cargo.lock` only).
 
-`quinn-proto` and `rustls` are patch bumps (`cargo update -p quinn-proto -p
-rustls`). `quick-xml` is pulled in transitively at two versions and needs the
-parent crates to move. Also reported as warnings: unmaintained
-`proc-macro-error` and the `unic-*` crates; unsound `anyhow`,
+Still reported as warnings (not failures): unmaintained `proc-macro-error` and
+the `unic-*` crates (transitive, via Tauri's build tooling); unsound `anyhow`,
 `event-listener`, `glib`.
 
 ## npm: production dependencies are clean
@@ -36,9 +34,10 @@ The remaining dev-only advisories need `npm audit fix --force` (breaking
 major bumps of build and test tooling), so they are left for a deliberate
 upgrade. Run `npm audit` (without `--omit=dev`) for the detail.
 
-## Next step
+## Known test-environment issue (not a dependency problem)
 
-Patch-bump `quinn-proto` and `rustls` and move `quick-xml`'s parents (the 6
-Rust advisories), re-run the full test matrix, then make the job blocking. The
-job already gates on production npm dependencies only (`--omit=dev`), which are
-clean.
+`tests::enable_cloud_backup_requires_backup_email_and_smtp` fails on a
+developer machine that already has a Perpetua backup key in the OS keyring for
+user id 1 ("first enable generates a key"), because the Rust tests use the
+real keyring. It fails identically on the pre-update lockfile. Tests should use
+an isolated keyring/service name.

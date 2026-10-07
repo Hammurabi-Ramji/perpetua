@@ -49,8 +49,9 @@ also builds — CI builds both targets.
 4. **Per-code attempt counter** for reset/invite codes (SEC-05 residual).
 5. ~~Pin GitHub Actions to SHAs, enable Dependabot, add `cargo audit` /
    `npm audit` jobs~~ (BLD-01, BLD-05) — done in the CI-hardening PR; the
-   audit job is **report-only** until the baseline in
-   `desktop/docs/DEPENDENCY_AUDIT.md` (6 Rust advisories, 5 npm) is fixed.
+   audit job is **blocking**; the baseline in
+   `desktop/docs/DEPENDENCY_AUDIT.md` is clean (0 Rust vulnerabilities, 0
+   production npm advisories as of 2026-10-07).
 6. **Branch protection** (BLD-03) — owner action in GitHub settings; CODEOWNERS
    and `SECURITY.md` (LEG-06) are now in the repo.
 7. **Playwright E2E in CI** against the release binary with per-spec databases

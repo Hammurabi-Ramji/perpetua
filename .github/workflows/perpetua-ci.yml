@@ -151,13 +151,11 @@ jobs:
       - name: Worker unit tests
         run: npm test
 
-  # Dependency advisories. Report-only for now: the 2026-10-07 baseline already
-  # has open advisories (see desktop/docs/DEPENDENCY_AUDIT.md), so failing here
-  # would turn main red. Flip `continue-on-error` to false once the baseline is
-  # clean.
+  # Dependency advisories. Blocking on production npm dependencies (high+) and
+  # on any cargo-audit vulnerability. Unmaintained/unsound crate warnings are
+  # reported but do not fail the job. Baseline: desktop/docs/DEPENDENCY_AUDIT.md.
   dependency-audit:
     runs-on: ubuntu-latest
-    continue-on-error: true
     defaults:
       run:
         working-directory: .
