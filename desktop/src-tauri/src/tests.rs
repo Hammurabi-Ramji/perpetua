@@ -12,13 +12,15 @@ use crate::api::build_router;
 use crate::database::{backup_dir_at, db_path_at, init_db_at};
 use crate::models::{AccountRecoverySettings, EnableCloudBackupRequest, LicensePayload};
 use crate::services::{
-    activate_pro, add_license, authenticate_user, collect_due_notifications, confirm_password_reset,
-    create_backup_in_dir, create_jwt, create_user, delete_license, enable_cloud_backup,
+    activate_pro, add_license, authenticate_user, bump_token_version, collect_due_notifications,
+    confirm_password_reset, create_backup_in_dir, create_jwt, create_user, delete_license,
+    enable_cloud_backup, get_user_by_id,
     export_licenses_csv, export_licenses_json, get_entitlement, get_license_by_id, get_license_stats,
     get_licenses, get_reminder_items, import_licenses_csv, import_licenses_json, list_backups_in_dir,
-    mark_license_active, mint_pro_key, prepare_invite, prepare_password_reset, redeem_invite,
-    resolve_data_owner_id, restore_vault_from_bytes_at, update_account_recovery_settings, update_license,
-    verify_pro_key, FREE_LICENSE_LIMIT,
+    mark_email_reminder_sent, mark_license_active, mint_pro_key, pending_email_reminders,
+    prepare_invite, prepare_password_reset, redeem_invite,
+    resolve_data_owner_id, restore_vault_from_bytes_at, token_is_current, update_account_recovery_settings,
+    update_license, update_reminder_settings, verify_jwt, verify_pro_key, FREE_LICENSE_LIMIT,
 };
 
 fn sample_license(product_name: &str, expiry_date: Option<&str>) -> LicensePayload {
@@ -755,6 +757,7 @@ fn password_reset_round_trip_requires_backup_email_and_smtp() {
     let temp = tempdir().expect("temp dir");
     let conn = init_db_at(temp.path()).expect("db");
     let user = create_user(&conn, "locked-out@example.com", "originalpass1").expect("user");
+    let issued = create_jwt("reset-secret", &user).expect("jwt before reset");
 
     // No backup email / SMTP configured yet — nothing to send, no code issued.
     assert!(prepare_password_reset(&conn, "locked-out@example.com")
@@ -792,9 +795,141 @@ fn password_reset_round_trip_requires_backup_email_and_smtp() {
     assert!(authenticate_user(&conn, "locked-out@example.com", "newpassword1")
         .expect("auth check")
         .is_some());
+    let after_reset = get_user_by_id(&conn, user.id).expect("user").expect("still exists");
+    assert!(after_reset.token_version > user.token_version);
+    let stale = verify_jwt("reset-secret", &issued).expect("stale jwt still parses");
+    assert!(!token_is_current(&after_reset, &stale));
 
     // The same code can't be replayed.
     assert!(confirm_password_reset(&conn, "locked-out@example.com", &code, "anotherpass1").is_err());
+}
+
+#[test]
+fn email_reminders_require_smtp_and_do_not_mark_unsent_mail() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let user = create_user(&conn, "mail@example.com", "password123").expect("user");
+    let today = chrono::Utc::now().date_naive().format("%Y-%m-%d").to_string();
+    add_license(
+        &conn,
+        user.id,
+        LicensePayload {
+            action_required: Some(true),
+            action_description: Some("Redeem now".to_string()),
+            action_deadline: Some(today),
+            ..sample_license("Redeem Today", None)
+        },
+    )
+    .expect("due license");
+
+    let turned_on = update_reminder_settings(
+        &conn,
+        user.id,
+        crate::models::ReminderSettingsUpdate {
+            notification_email: None,
+            email_notifications: true,
+            browser_notifications: true,
+        },
+    );
+    assert!(turned_on.is_err(), "toggle must not turn on without SMTP");
+    let stored = crate::services::get_reminder_settings(&conn, user.id)
+        .expect("settings")
+        .expect("row");
+    assert!(!stored.email_notifications);
+
+    // A preference forced on without a relay must not look like mail went out.
+    conn.execute("UPDATE users SET email_notifications = 1 WHERE id = ?1", [user.id])
+        .expect("force preference");
+    let skipped = pending_email_reminders(&conn).expect("pending without smtp");
+    assert!(skipped.is_empty());
+    let logged: i64 = conn
+        .query_row("SELECT COUNT(*) FROM reminder_email_log", [], |row| row.get(0))
+        .expect("log count");
+    assert_eq!(logged, 0);
+
+    let mut recovery = sample_recovery_settings();
+    recovery.backup_email = Some("backup@example.com".to_string());
+    update_account_recovery_settings(&conn, user.id, recovery).expect("smtp");
+    update_reminder_settings(
+        &conn,
+        user.id,
+        crate::models::ReminderSettingsUpdate {
+            notification_email: Some("alerts@example.com".to_string()),
+            email_notifications: true,
+            browser_notifications: true,
+        },
+    )
+    .expect("enable with smtp");
+
+    let pending = pending_email_reminders(&conn).expect("pending");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].to, "alerts@example.com");
+    assert!(pending[0].settings.smtp_host.is_some());
+    mark_email_reminder_sent(&conn, pending[0].notice.license_id, &pending[0].notice.kind).expect("mark");
+    assert!(pending_email_reminders(&conn).expect("second").is_empty());
+}
+
+#[tokio::test]
+async fn revoke_extension_token_rejects_the_old_jwt_and_issues_a_new_one() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let user = create_user(&conn, "ext@example.com", "password123").expect("user");
+    let stale = create_jwt("test-secret", &user).expect("extension token");
+    let router = build_router(Arc::new(Mutex::new(conn)), Arc::new("test-secret".to_string()));
+
+    let revoked = router
+        .clone()
+        .oneshot(http("POST", "/api/auth/revoke-extension", Some(&stale), None))
+        .await
+        .expect("revoke");
+    assert_eq!(revoked.status(), StatusCode::OK);
+    let body = read_json(revoked).await;
+    let fresh = body["data"]["token"].as_str().expect("replacement token").to_string();
+    assert_ne!(fresh, stale);
+
+    let old_me = router
+        .clone()
+        .oneshot(http("GET", "/api/auth/me", Some(&stale), None))
+        .await
+        .expect("old me");
+    assert_eq!(old_me.status(), StatusCode::UNAUTHORIZED);
+
+    let new_me = router
+        .clone()
+        .oneshot(http("GET", "/api/auth/me", Some(&fresh), None))
+        .await
+        .expect("new me");
+    assert_eq!(new_me.status(), StatusCode::OK);
+
+    // A token minted before revocation existed (no `ver` claim) matches version 0
+    // and is rejected once the version has been bumped.
+    let legacy = jsonwebtoken::encode(
+        &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
+        &serde_json::json!({ "sub": user.id, "email": user.email, "exp": chrono::Utc::now().timestamp() + 3600 }),
+        &jsonwebtoken::EncodingKey::from_secret(b"test-secret"),
+    )
+    .expect("legacy jwt");
+    let legacy_me = router
+        .oneshot(http("GET", "/api/auth/me", Some(&legacy), None))
+        .await
+        .expect("legacy me");
+    assert_eq!(legacy_me.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[test]
+fn bump_token_version_makes_the_previous_jwt_stale() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let user = create_user(&conn, "ver@example.com", "password123").expect("user");
+    let token = create_jwt("secret", &user).expect("jwt");
+    let claims = verify_jwt("secret", &token).expect("claims");
+    assert!(token_is_current(&user, &claims));
+
+    let bumped = bump_token_version(&conn, user.id).expect("bump");
+    assert!(!token_is_current(&bumped, &claims));
+    let refreshed = create_jwt("secret", &bumped).expect("new jwt");
+    let next = verify_jwt("secret", &refreshed).expect("next claims");
+    assert!(token_is_current(&bumped, &next));
 }
 
 #[test]

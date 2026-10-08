@@ -151,7 +151,9 @@
 				...saved,
 				notification_email: saved.notification_email ?? ''
 			};
-			successMessage = 'Reminder settings saved locally.';
+			successMessage = saved.email_notifications
+				? 'Reminder settings saved. Due reminders will be emailed through your SMTP relay when they are due. Nothing is sent just by saving this.'
+				: 'Reminder settings saved.';
 		} catch (saveError) {
 			error = saveError instanceof Error ? saveError.message : 'Failed to update reminder settings';
 		} finally {
@@ -298,12 +300,25 @@
 				the queue above still updates.
 			</p>
 
-			<!--
-				Email reminders are intentionally not offered: Perpetua has no mail
-				service, and the user's own SMTP relay (below) is only used for
-				password-reset codes and recovery keys. A toggle that did nothing
-				would be a false promise.
-			-->
+			<label class="checkbox">
+				<input
+					bind:checked={settings.email_notifications}
+					type="checkbox"
+					disabled={!recovery.smtp_host}
+				/>
+				<span>Email due reminders through my SMTP relay</span>
+			</label>
+			<p class="muted small">
+				{#if recovery.smtp_host}
+					When a reminder is due, Perpetua sends it with the SMTP relay saved below, to your
+					backup email (or your account email if you have not set one). Saving this does not
+					send a message. If the relay rejects the message, Perpetua logs the failure and does
+					not treat it as delivered. Perpetua does not run a mail server.
+				{:else}
+					Set the SMTP relay under Backup email &amp; account recovery before turning this on.
+					Until then Perpetua will not pretend an email was sent.
+				{/if}
+			</p>
 
 			<div class="actions">
 				<button type="submit" disabled={saving}>{saving ? 'Saving...' : 'Save reminder settings'}</button>

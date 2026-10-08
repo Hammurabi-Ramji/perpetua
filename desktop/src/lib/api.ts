@@ -141,6 +141,11 @@ export function getCurrentUser() {
   return request<User>("/auth/me");
 }
 
+/** Invalidates the browser-extension pairing token and returns a fresh desktop session. */
+export function revokeExtensionToken() {
+  return request<AuthResponse>("/auth/revoke-extension", { method: "POST" });
+}
+
 export function completeOnboarding() {
   return request<{ onboarding_completed: boolean }>("/auth/onboarding/complete", {
     method: "POST",

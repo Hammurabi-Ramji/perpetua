@@ -26,9 +26,9 @@ use crate::services::{
     get_user_by_id, import_licenses_csv, import_licenses_json, list_backups, list_site_connections,
     list_vault_members, mark_license_active, mark_onboarding_complete, mark_pro_activated,
     prepare_cloud_sync, prepare_invite, prepare_password_reset, record_cloud_sync_result,
-    redeem_invite, resolve_data_owner_id, restore_vault_from_bytes, update_account_recovery_settings,
-    update_license, update_reminder_settings, validate_credentials, vault_has_users, verify_jwt,
-    FreeLimitReached,
+    redeem_invite, resolve_data_owner_id, restore_vault_from_bytes, token_is_current,
+    bump_token_version, update_account_recovery_settings, update_license, update_reminder_settings,
+    validate_credentials, vault_has_users, verify_jwt, FreeLimitReached,
 };
 use rusqlite::Connection;
 use std::collections::VecDeque;
@@ -104,6 +104,7 @@ pub(crate) fn build_router(db: Arc<Mutex<Connection>>, jwt_secret: Arc<String>) 
         .route("/api/auth/login", post(login))
         .route("/api/auth/register", post(register))
         .route("/api/auth/me", get(me))
+        .route("/api/auth/revoke-extension", post(revoke_extension_token_route))
         .route("/api/auth/onboarding/complete", post(complete_onboarding_route))
         .route("/api/auth/forgot-password", post(forgot_password_route))
         .route("/api/auth/reset-password", post(reset_password_route))
@@ -337,7 +338,41 @@ async fn authorized_user(
                 .into_response()
         })?;
 
+    if !token_is_current(&user, &claims) {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ApiResponse::<serde_json::Value> {
+                success: false,
+                data: None,
+                message: Some("This token has been revoked. Sign in again.".to_string()),
+            }),
+        )
+            .into_response());
+    }
+
     Ok(user)
+}
+
+/// Bumps `token_version`, which invalidates the browser-extension pairing
+/// token (and any other JWT issued before this call). Returns a fresh
+/// desktop session so the app that requested the revoke stays signed in.
+async fn revoke_extension_token_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+
+    let conn = db.lock().await;
+    match bump_token_version(&conn, user.id) {
+        Ok(user) => match build_auth_response(jwt_secret.as_str(), user) {
+            Ok(response) => success(response),
+            Err(_) => failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to issue a replacement session"),
+        },
+        Err(_) => failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to revoke the extension token"),
+    }
 }
 
 /// Resolves the vault whose data a request should act on: the caller's own,

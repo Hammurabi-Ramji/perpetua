@@ -24,6 +24,10 @@ pub struct Claims {
     pub sub: i64,
     pub email: String,
     pub exp: usize,
+    /// `users.token_version` at issue time. Absent on tokens minted before
+    /// revocation existed; those compare as 0, which matches an un-bumped user.
+    #[serde(default)]
+    pub ver: i64,
 }
 
 const REMINDER_WINDOW_DAYS: i64 = 30;
@@ -249,11 +253,12 @@ fn map_user(row: &rusqlite::Row<'_>) -> rusqlite::Result<User> {
         browser_notifications: bool_from_sql(row.get(6)?),
         onboarding_completed: bool_from_sql(row.get(7)?),
         backup_email: row.get(8)?,
+        token_version: row.get(9)?,
     })
 }
 
 const USER_COLUMNS: &str = "id, email, created_at, last_login, notification_email, \
-    email_notifications, browser_notifications, onboarding_completed, backup_email";
+    email_notifications, browser_notifications, onboarding_completed, backup_email, token_version";
 
 fn map_license(row: &rusqlite::Row<'_>) -> rusqlite::Result<License> {
     Ok(License {
@@ -289,6 +294,7 @@ pub fn create_jwt(secret: &str, user: &User) -> Result<String> {
         sub: user.id,
         email: user.email.clone(),
         exp: expiration,
+        ver: user.token_version,
     };
 
     Ok(encode(
@@ -306,6 +312,22 @@ pub fn verify_jwt(secret: &str, token: &str) -> Result<Claims> {
     )?;
 
     Ok(token_data.claims)
+}
+
+/// True when the token was issued at the user's current `token_version`.
+pub fn token_is_current(user: &User, claims: &Claims) -> bool {
+    claims.ver == user.token_version
+}
+
+/// Invalidates every JWT already issued for this user, including the
+/// browser-extension pairing token. Returns the user with the new version
+/// so the caller can mint a replacement session for the desktop app.
+pub fn bump_token_version(conn: &Connection, user_id: i64) -> Result<User> {
+    conn.execute(
+        "UPDATE users SET token_version = token_version + 1 WHERE id = ?",
+        params![user_id],
+    )?;
+    get_user_by_id(conn, user_id)?.ok_or_else(|| anyhow!("user not found"))
 }
 
 /// Canonical form for account emails: trimmed and lower-cased, so `A@x.com`
@@ -396,8 +418,9 @@ pub fn authenticate_user(conn: &Connection, email: &str, password: &str) -> Resu
                     browser_notifications: bool_from_sql(row.get(6)?),
                     onboarding_completed: bool_from_sql(row.get(7)?),
                     backup_email: row.get(8)?,
+                    token_version: row.get(9)?,
                 },
-                row.get::<_, String>(9)?,
+                row.get::<_, String>(10)?,
             ))
         })
         .optional()?;
@@ -977,6 +1000,111 @@ pub fn pending_notifications(conn: &Connection) -> Result<Vec<ReminderNotice>> {
     Ok(notices)
 }
 
+/// One due reminder ready to send through the user's own SMTP relay.
+/// `settings` includes the relay password for the in-process sender only;
+/// it is never returned by the HTTP API.
+pub struct OutboundReminder {
+    pub to: String,
+    pub settings: AccountRecoverySettings,
+    pub notice: ReminderNotice,
+}
+
+fn email_already_sent_today(conn: &Connection, license_id: i64, kind: &str, today: &str) -> Result<bool> {
+    let mut stmt =
+        conn.prepare("SELECT notified_on FROM reminder_email_log WHERE license_id = ? AND kind = ?")?;
+    let value: Option<String> = stmt
+        .query_row(params![license_id, kind], |row| row.get(0))
+        .optional()?;
+    Ok(value.as_deref() == Some(today))
+}
+
+fn reminder_recipient(user: &User, settings: &AccountRecoverySettings) -> Option<String> {
+    normalize_optional(user.notification_email.clone())
+        .or_else(|| normalize_optional(settings.backup_email.clone()))
+        .or_else(|| normalize_optional(Some(user.email.clone())))
+}
+
+/// Due reminders for accounts that opted into email, but only when that
+/// account's SMTP relay is actually configured. A preference with no relay
+/// is logged and skipped — nothing is marked sent.
+pub fn pending_email_reminders(conn: &Connection) -> Result<Vec<OutboundReminder>> {
+    let today = today_local().to_string();
+    let mut stmt = conn.prepare("SELECT id FROM users WHERE email_notifications = 1")?;
+    let user_ids: Vec<i64> = stmt.query_map([], |row| row.get(0))?.collect::<Result<Vec<_>, _>>()?;
+    drop(stmt);
+
+    let mut outbound = Vec::new();
+    for user_id in user_ids {
+        let settings = get_account_recovery_settings(conn, user_id)?;
+        let smtp_ready = settings
+            .smtp_host
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|host| !host.is_empty());
+        if !smtp_ready {
+            crate::diag::log(&format!(
+                "email reminders are enabled for user {user_id} but SMTP is not configured; no email was sent"
+            ));
+            continue;
+        }
+        let Some(user) = get_user_by_id(conn, user_id)? else {
+            continue;
+        };
+        let Some(to) = reminder_recipient(&user, &settings) else {
+            crate::diag::log(&format!(
+                "email reminders are enabled for user {user_id} but there is no recipient address; no email was sent"
+            ));
+            continue;
+        };
+
+        let items = match get_reminder_items(conn, user_id) {
+            Ok(items) => items,
+            Err(error) => {
+                crate::diag::log(&format!("email reminder scan failed for user {user_id}: {error}"));
+                continue;
+            }
+        };
+        for item in items {
+            if item.days_remaining > NOTIFY_WINDOW_DAYS {
+                continue;
+            }
+            if email_already_sent_today(conn, item.license_id, &item.kind, &today)? {
+                continue;
+            }
+            let title = format!("Perpetua reminder: {}", item.product_name);
+            let body = format!(
+                "{}\n\nThis message was sent through the SMTP relay you configured in Perpetua. Perpetua does not operate a mail server.",
+                item.action_description
+                    .clone()
+                    .unwrap_or_else(|| format!("{} is {} ({}).", item.product_name, item.status, item.due_date))
+            );
+            outbound.push(OutboundReminder {
+                to: to.clone(),
+                settings: settings.clone(),
+                notice: ReminderNotice {
+                    license_id: item.license_id,
+                    kind: item.kind,
+                    title,
+                    body,
+                },
+            });
+        }
+    }
+    Ok(outbound)
+}
+
+/// Records that an email reminder was actually accepted by the user's SMTP
+/// relay. Callers must not call this when the relay is missing or the send failed.
+pub fn mark_email_reminder_sent(conn: &Connection, license_id: i64, kind: &str) -> Result<()> {
+    let today = today_local().to_string();
+    conn.execute(
+        "INSERT INTO reminder_email_log (license_id, kind, notified_on) VALUES (?, ?, ?)
+         ON CONFLICT(license_id, kind) DO UPDATE SET notified_on = excluded.notified_on",
+        params![license_id, kind, today],
+    )?;
+    Ok(())
+}
+
 /// Records that `notice` was shown today so it isn't repeated until tomorrow.
 pub fn mark_notice_delivered(conn: &Connection, notice: &ReminderNotice) -> Result<()> {
     mark_notified(conn, notice.license_id, &notice.kind, &today_local().to_string())
@@ -1016,6 +1144,21 @@ pub fn update_reminder_settings(
     user_id: i64,
     payload: ReminderSettingsUpdate,
 ) -> Result<Option<ReminderSettings>> {
+    if payload.email_notifications {
+        let recovery = get_account_recovery_settings(conn, user_id)?;
+        let smtp_ready = recovery
+            .smtp_host
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|host| !host.is_empty());
+        if !smtp_ready {
+            return Err(anyhow!(
+                "Email reminders need the SMTP relay under Backup email & account recovery. \
+                 Nothing was sent, and the toggle was not turned on."
+            ));
+        }
+    }
+
     conn.execute(
         "UPDATE users
          SET notification_email = ?, email_notifications = ?, browser_notifications = ?
@@ -1229,7 +1372,7 @@ pub fn confirm_password_reset(conn: &Connection, email: &str, code: &str, new_pa
 
     let new_hash = hash(new_password, DEFAULT_COST)?;
     conn.execute(
-        "UPDATE users SET password_hash = ? WHERE id = ?",
+        "UPDATE users SET password_hash = ?, token_version = token_version + 1 WHERE id = ?",
         params![new_hash, user.id],
     )?;
     conn.execute(

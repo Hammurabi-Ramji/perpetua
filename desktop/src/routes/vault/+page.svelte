@@ -9,6 +9,7 @@
 		getCloudBackupSettings,
 		getStoredToken,
 		importLicenses,
+		revokeExtensionToken,
 		listBackups,
 		restoreCloudBackup,
 		syncCloudBackupNow
@@ -105,9 +106,27 @@
 
 	let extensionTokenRevealed = false;
 	let extensionTokenMessage = '';
+	let revokeBusy = false;
 
 	function revealExtensionToken() {
 		extensionTokenRevealed = true;
+	}
+
+	async function revokeExtension() {
+		revokeBusy = true;
+		extensionTokenMessage = '';
+		error = null;
+		try {
+			const session = await revokeExtensionToken();
+			auth.replaceSession(session.token, session.user);
+			extensionTokenRevealed = true;
+			extensionTokenMessage =
+				'Extension token revoked. The token shown below is a new desktop session — paste it into the extension only if you still want it paired.';
+		} catch (revokeError) {
+			error = revokeError instanceof Error ? revokeError.message : 'Could not revoke the extension token';
+		} finally {
+			revokeBusy = false;
+		}
 	}
 
 	async function copyExtensionToken() {
@@ -620,7 +639,14 @@
 		<div class="actions">
 			<button type="button" class="secondary" on:click={copyExtensionToken}>Copy token</button>
 			<button type="button" class="secondary" on:click={() => (extensionTokenRevealed = false)}>Hide</button>
+			<button type="button" class="danger" disabled={revokeBusy} on:click={revokeExtension}>
+				{revokeBusy ? 'Revoking…' : 'Revoke extension token'}
+			</button>
 		</div>
+		<p class="muted small">
+			Revoke signs this browser extension out. Any token copied earlier stops working immediately.
+			Perpetua stays signed in here with a new session.
+		</p>
 	{/if}
 </section>
 

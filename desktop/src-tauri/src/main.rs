@@ -417,6 +417,34 @@ fn spawn_reminder_scheduler(handle: tauri::AppHandle) {
                 }
             }
 
+            // Email reminders use the same SMTP relay as password reset. If the
+            // relay is not configured, pending_email_reminders logs that and
+            // returns nothing — it does not mark mail as sent.
+            let outbound = {
+                let conn = state.db.lock().await;
+                match services::pending_email_reminders(&conn) {
+                    Ok(items) => items,
+                    Err(error) => {
+                        diag::log(&format!("email reminder check failed: {error:#}"));
+                        Vec::new()
+                    }
+                }
+            };
+            for item in outbound {
+                match mail::send_email(&item.settings, &item.to, &item.notice.title, &item.notice.body).await {
+                    Ok(()) => {
+                        let conn = state.db.lock().await;
+                        if let Err(error) = services::mark_email_reminder_sent(&conn, item.notice.license_id, &item.notice.kind)
+                        {
+                            diag::log(&format!("could not record email reminder delivery: {error:#}"));
+                        }
+                    }
+                    Err(error) => {
+                        diag::log(&format!("email reminder not sent ({}): {error:#}", item.notice.kind));
+                    }
+                }
+            }
+
             tokio::time::sleep(INTERVAL).await;
         }
     });

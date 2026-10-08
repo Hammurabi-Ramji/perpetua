@@ -144,6 +144,13 @@ pub fn apply_schema(conn: &Connection) -> Result<()> {
             PRIMARY KEY (license_id, kind)
         );
 
+        CREATE TABLE IF NOT EXISTS reminder_email_log (
+            license_id INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            notified_on TEXT NOT NULL,
+            PRIMARY KEY (license_id, kind)
+        );
+
         CREATE TABLE IF NOT EXISTS connected_sites (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
@@ -216,6 +223,12 @@ pub fn apply_schema(conn: &Connection) -> Result<()> {
         [],
     );
     let _ = conn.execute("ALTER TABLE users ADD COLUMN backup_email TEXT", []);
+    // Bumped on password change and when the browser-extension token is
+    // revoked. JWTs carry the version they were issued at; a mismatch is rejected.
+    let _ = conn.execute(
+        "ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
     // Pending invites now expire (see prepare_invite). redeem_invite requires
     // expires_at to be set and in the future, so any pre-migration invite rows
     // (NULL expires_at) simply can no longer be redeemed — fail closed rather

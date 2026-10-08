@@ -11,6 +11,10 @@ pub struct User {
     pub browser_notifications: bool,
     pub onboarding_completed: bool,
     pub backup_email: Option<String>,
+    /// Incremented to invalidate previously issued JWTs (password change,
+    /// extension-token revoke). Included in the session token as `ver`.
+    #[serde(default)]
+    pub token_version: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
