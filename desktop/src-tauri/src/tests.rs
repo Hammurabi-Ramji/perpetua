@@ -806,6 +806,89 @@ fn password_reset_round_trip_requires_backup_email_and_smtp() {
 }
 
 #[test]
+fn vault_file_is_still_plaintext_sqlite() {
+    // SQLCipher was not switched on. Git for Windows Perl cannot load
+    // Locale::Maketext::Simple, and Strawberry Perl is not installed, so
+    // rusqlite's vendored OpenSSL build cannot configure. Do not describe
+    // this file as encrypted.
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    drop(conn);
+    let bytes = std::fs::read(db_path_at(temp.path()).expect("path")).expect("bytes");
+    assert!(bytes.starts_with(b"SQLite format 3\0"));
+}
+
+#[test]
+fn auto_maintain_stores_credentials_only_in_the_keychain_and_downgrades() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let user = create_user(&conn, "maintain@example.com", "password123").expect("user");
+    let stale = (chrono::Utc::now().date_naive() - chrono::Duration::days(40))
+        .format("%Y-%m-%d")
+        .to_string();
+    let license = add_license(
+        &conn,
+        user.id,
+        LicensePayload {
+            keepalive_days: Some(30),
+            last_active: Some(stale.clone()),
+            ..sample_license("Vendor Tool", None)
+        },
+    )
+    .expect("license");
+
+    let denied = crate::auto_maintain::set_auto_maintain(
+        &conn,
+        user.id,
+        license.id,
+        true,
+        Some("vendor-user"),
+        Some("Vendor-Secret-99"),
+    );
+    assert!(denied.is_err());
+    assert!(denied.unwrap_err().to_string().contains("Pro"));
+
+    activate_pro(&conn, user.id, &mint_pro_key("maintain").expect("key")).expect("pro");
+    let saved = crate::auto_maintain::set_auto_maintain(
+        &conn,
+        user.id,
+        license.id,
+        true,
+        Some("vendor-user"),
+        Some("Vendor-Secret-99"),
+    )
+    .expect("opt in");
+    assert!(saved.enabled);
+    assert!(saved.credential_set);
+    let listed = serde_json::to_string(&crate::auto_maintain::list_auto_maintain(&conn, user.id).expect("list")).unwrap();
+    assert!(!listed.contains("Vendor-Secret-99"));
+    assert!(!listed.contains("vendor-user"));
+
+    let before = get_license_by_id(&conn, user.id, license.id).expect("fetch").expect("row");
+    assert_eq!(crate::auto_maintain::run_auto_maintain_pass(&conn).expect("run"), 1);
+    let after = get_license_by_id(&conn, user.id, license.id).expect("fetch").expect("row");
+    assert_eq!(after.last_active, before.last_active);
+    let outcome: String = conn
+        .query_row(
+            "SELECT outcome FROM auto_maintain_audit WHERE license_id = ?1",
+            rusqlite::params![license.id],
+            |row| row.get(0),
+        )
+        .expect("audit");
+    assert_eq!(outcome, "downgraded_to_reminder");
+    assert!(get_reminder_items(&conn, user.id)
+        .expect("reminders")
+        .iter()
+        .any(|item| item.license_id == license.id && item.kind == "keepalive"));
+
+    drop(conn);
+    let raw = std::fs::read(db_path_at(temp.path()).expect("path")).expect("db bytes");
+    let text = String::from_utf8_lossy(&raw);
+    assert!(!text.contains("Vendor-Secret-99"));
+    assert!(!text.contains("vendor-user"));
+}
+
+#[test]
 fn device_sync_plan_refuses_a_newer_local_vault_and_a_bad_payload() {
     let local_dir = tempdir().expect("local");
     let local = init_db_at(local_dir.path()).expect("local db");

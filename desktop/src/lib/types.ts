@@ -108,6 +108,13 @@ export interface ReminderSettings {
   browser_notifications: boolean;
 }
 
+export interface AutoMaintainLicense {
+  license_id: number;
+  product_name: string;
+  enabled: boolean;
+  credential_set: boolean;
+}
+
 export interface ReminderItem {
   license_id: number;
   product_name: string;

@@ -301,6 +301,26 @@ export function listReminderItems() {
   return request<ReminderItem[]>("/reminders/items");
 }
 
+export function listAutoMaintain() {
+  return request<import("$lib/types").AutoMaintainLicense[]>("/auto-maintain");
+}
+
+export function setAutoMaintain(
+  licenseId: number,
+  enabled: boolean,
+  username: string,
+  password: string,
+) {
+  return request<import("$lib/types").AutoMaintainLicense>(`/auto-maintain/${licenseId}`, {
+    method: "POST",
+    body: JSON.stringify({
+      enabled,
+      username,
+      password,
+    }),
+  });
+}
+
 export function snoozeReminder(item: ReminderItem, hours: number) {
   return request<{ snoozed: boolean }>("/reminders/snooze", {
     method: "POST",

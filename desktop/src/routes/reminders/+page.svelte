@@ -7,24 +7,52 @@
 		getActivityInference,
 		getReminderSettings,
 		inviteMember,
+		listAutoMaintain,
 		listReminderItems,
 		listVaultMembers,
 		snoozeReminder,
 		redeemInvite,
 		sendTestRecoveryEmail,
 		setActivityInference,
+		setAutoMaintain,
 		updateAccountRecovery,
 		updateReminderSettings
 	} from '$lib/api';
-	import { SUPPORT_EMAIL } from '$lib/commerce';
 	import { entitlement, refreshEntitlement } from '$lib/stores/entitlement';
-	import type { AccountRecoverySettings, ReminderItem, ReminderSettings, VaultMember } from '$lib/types';
+	import type {
+		AccountRecoverySettings,
+		AutoMaintainLicense,
+		ReminderItem,
+		ReminderSettings,
+		VaultMember
+	} from '$lib/types';
 
+	let maintain: AutoMaintainLicense[] = [];
+	let maintainDrafts: Record<number, { username: string; password: string }> = {};
+	let maintainBusy = 0;
 	let activityInference = false;
 	let activityBusy = false;
 	let snoozeHours = '24';
 	let muteBusy = '';
 	let loading = true;
+
+	async function saveMaintain(row: AutoMaintainLicense, enabled: boolean) {
+		maintainBusy = row.license_id;
+		error = null;
+		const draft = maintainDrafts[row.license_id] ?? { username: '', password: '' };
+		try {
+			const saved = await setAutoMaintain(row.license_id, enabled, draft.username, draft.password);
+			maintain = maintain.map((item) => (item.license_id === saved.license_id ? saved : item));
+			maintainDrafts[row.license_id] = { username: draft.username, password: '' };
+			successMessage = enabled
+				? `${row.product_name} is opted in. The password stays in the OS keychain. Perpetua will not log in for you; the attempt is recorded and the normal reminder still fires.`
+				: `${row.product_name} Auto-Maintain opt-in is off.`;
+		} catch (maintainError) {
+			error = maintainError instanceof Error ? maintainError.message : 'Could not update Auto-Maintain';
+		} finally {
+			maintainBusy = 0;
+		}
+	}
 
 	async function saveActivityInference(event: Event) {
 		const enabled = (event.currentTarget as HTMLInputElement).checked;
@@ -188,6 +216,12 @@
 			await Promise.all([refreshEntitlement(), loadLaunchAtLogin()]);
 			if ($entitlement?.pro) {
 				members = await listVaultMembers();
+				maintain = await listAutoMaintain();
+				maintainDrafts = Object.fromEntries(
+					maintain.map((row) => [row.license_id, { username: '', password: '' }])
+				);
+			} else {
+				maintain = [];
 			}
 		} catch (loadError) {
 			error = loadError instanceof Error ? loadError.message : 'Failed to load reminder settings';
@@ -600,23 +634,61 @@
 <section class="panel">
 	<div class="panel-heading">
 		<div>
-			<h3>Auto-Maintain <span class="soon-badge">Coming soon · Pro</span></h3>
+			<h3>Auto-Maintain</h3>
 			<p class="muted">
-				Let Perpetua keep deal accounts alive for you — automatically completing periodic
-				logins and redemption steps for vendors that require them, so a lifetime deal never
-				lapses for inactivity.
+				Optional, Pro, and off until you turn it on for a specific license. Perpetua can store a
+				vendor username and password in the operating system keychain. It does not log into the
+				vendor, submit that password, or bypass 2FA or CAPTCHA. Each attempt is recorded and falls
+				back to the normal keep-alive reminder.
 			</p>
 		</div>
 	</div>
-	<!--
-		No "Notify me" button: Perpetua has no telemetry or mailing list, so a
-		button that only flipped a local flag would have been a false promise.
-		Interest goes to a real mailbox instead.
-	-->
-	<p class="muted small">
-		Want this? Email <a href={`mailto:${SUPPORT_EMAIL}?subject=Auto-Maintain%20interest`}>{SUPPORT_EMAIL}</a>
-		with the vendors you'd use it for — that's what decides the build order.
-	</p>
+	{#if $entitlement?.pro}
+		{#if maintain.length === 0}
+			<p class="empty-state">Add a license before opting it in.</p>
+		{:else}
+			<div class="stack">
+				{#each maintain as row (row.license_id)}
+					<div class="license-card">
+						<div>
+							<h4>{row.product_name}</h4>
+							<p class="muted small">
+								{row.credential_set
+									? 'A vendor password is stored in the OS keychain. It is not shown here.'
+									: 'No vendor password stored.'}
+							</p>
+							<label>
+								<span>Vendor username</span>
+								<input bind:value={maintainDrafts[row.license_id].username} autocomplete="off" />
+							</label>
+							<label>
+								<span>Vendor password</span>
+								<input
+									bind:value={maintainDrafts[row.license_id].password}
+									type="password"
+									autocomplete="new-password"
+									placeholder={row.credential_set ? 'Saved — leave blank to keep' : 'Stored only in the OS keychain'}
+								/>
+							</label>
+						</div>
+						<button
+							type="button"
+							class="secondary"
+							disabled={maintainBusy === row.license_id}
+							on:click={() => saveMaintain(row, !row.enabled)}
+						>
+							{row.enabled ? 'Turn off' : 'Opt in'}
+						</button>
+					</div>
+				{/each}
+			</div>
+		{/if}
+	{:else}
+		<p class="empty-state">
+			Auto-Maintain is a one-time Pro license feature, and it stays off unless you opt in per
+			license after upgrading. It is not included with the free vault.
+		</p>
+	{/if}
 </section>
 
 <style>

@@ -151,6 +151,20 @@ pub fn apply_schema(conn: &Connection) -> Result<()> {
             PRIMARY KEY (license_id, kind)
         );
 
+        CREATE TABLE IF NOT EXISTS auto_maintain_opt_in (
+            license_id INTEGER PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS auto_maintain_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            license_id INTEGER NOT NULL,
+            attempted_at TEXT NOT NULL,
+            outcome TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS reminder_mutes (
             user_id INTEGER NOT NULL,
             license_id INTEGER NOT NULL,

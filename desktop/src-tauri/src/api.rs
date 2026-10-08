@@ -150,6 +150,8 @@ pub(crate) fn build_router(db: Arc<Mutex<Connection>>, jwt_secret: Arc<String>) 
         .route("/api/reminders/items", get(get_reminder_items_route))
         .route("/api/reminders/snooze", post(snooze_reminder_route))
         .route("/api/reminders/dismiss", post(dismiss_reminder_route))
+        .route("/api/auto-maintain", get(list_auto_maintain_route))
+        .route("/api/auto-maintain/:id", post(set_auto_maintain_route))
         .route("/api/reminders/settings", get(get_settings).patch(update_settings))
         .route("/api/vendor-policies", get(vendor_policies_meta))
         .route("/api/vendor-policies/suggest", get(vendor_policy_suggest))
@@ -1189,6 +1191,79 @@ async fn activity_visit_route(
     match crate::activity::record_host_visit(&conn, user.id, owner_id, &payload.host) {
         Ok(updated) => success(json!({ "updated": updated })),
         Err(error) => failure(StatusCode::FORBIDDEN, &error.to_string()),
+    }
+}
+
+#[derive(Deserialize)]
+struct AutoMaintainUpdate {
+    enabled: bool,
+    #[serde(default)]
+    username: Option<String>,
+    #[serde(default)]
+    password: Option<String>,
+}
+
+async fn list_auto_maintain_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+    let conn = db.lock().await;
+    let owner_id = match resolved_owner(&conn, &user) {
+        Ok(id) => id,
+        Err(error) => return error,
+    };
+    match crate::auto_maintain::list_auto_maintain(&conn, owner_id) {
+        Ok(rows) => success(rows),
+        Err(_) => failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to list Auto-Maintain settings"),
+    }
+}
+
+async fn set_auto_maintain_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+    Path(license_id): Path<i64>,
+    Json(payload): Json<AutoMaintainUpdate>,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+    let conn = db.lock().await;
+    let owner_id = match resolved_owner(&conn, &user) {
+        Ok(id) => id,
+        Err(error) => return error,
+    };
+    match crate::auto_maintain::set_auto_maintain(
+        &conn,
+        owner_id,
+        license_id,
+        payload.enabled,
+        payload.username.as_deref(),
+        payload.password.as_deref(),
+    ) {
+        Ok(row) => {
+            let body = serde_json::to_string(&row).unwrap_or_default();
+            if payload.password.as_deref().is_some_and(|password| !password.is_empty() && body.contains(password))
+            {
+                return failure(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Refusing to return a vendor password.",
+                );
+            }
+            success(row)
+        }
+        Err(error) => {
+            let status = if error.to_string().contains("Pro feature") {
+                StatusCode::PAYMENT_REQUIRED
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            failure(status, &error.to_string())
+        }
     }
 }
 
