@@ -20,13 +20,13 @@ use crate::models::{
 use crate::services::{
     activate_pro, add_license, authenticate_user, build_auth_response, confirm_password_reset,
     connect_site, create_backup, create_site, create_user, delete_license, delete_site,
-    disconnect_site, enable_cloud_backup, export_licenses_csv, export_licenses_json,
+    disconnect_site, dismiss_reminder, enable_cloud_backup, export_licenses_csv, export_licenses_json,
     get_account_recovery_settings, get_cloud_backup_settings, get_entitlement, get_license_by_id,
     get_license_stats, get_licenses, get_reminder_items, get_reminder_settings, get_user_by_email,
     get_user_by_id, import_licenses_csv, import_licenses_json, list_backups, list_site_connections,
     list_vault_members, mark_license_active, mark_onboarding_complete, mark_pro_activated,
     prepare_cloud_sync, prepare_invite, prepare_password_reset, record_cloud_sync_result,
-    redeem_invite, resolve_data_owner_id, restore_vault_from_bytes, token_is_current,
+    redeem_invite, resolve_data_owner_id, restore_vault_from_bytes, snooze_reminder, token_is_current,
     bump_token_version, update_account_recovery_settings, update_license, update_reminder_settings,
     validate_credentials, vault_has_users, verify_jwt, FreeLimitReached,
 };
@@ -137,6 +137,8 @@ pub(crate) fn build_router(db: Arc<Mutex<Connection>>, jwt_secret: Arc<String>) 
         .route("/api/cloud-backup/sync", post(sync_cloud_backup_route))
         .route("/api/cloud-backup/restore", post(restore_cloud_backup_route))
         .route("/api/reminders/items", get(get_reminder_items_route))
+        .route("/api/reminders/snooze", post(snooze_reminder_route))
+        .route("/api/reminders/dismiss", post(dismiss_reminder_route))
         .route("/api/reminders/settings", get(get_settings).patch(update_settings))
         .route("/api/vendor-policies", get(vendor_policies_meta))
         .route("/api/vendor-policies/suggest", get(vendor_policy_suggest))
@@ -1018,7 +1020,7 @@ async fn update_settings(
     match update_reminder_settings(&conn, user.id, payload) {
         Ok(Some(settings)) => success(settings),
         Ok(None) => failure(StatusCode::NOT_FOUND, "Settings not found"),
-        Err(_) => failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to update settings"),
+        Err(error) => failure(StatusCode::BAD_REQUEST, &error.to_string()),
     }
 }
 
@@ -1039,6 +1041,63 @@ async fn get_reminder_items_route(
     match get_reminder_items(&conn, owner_id) {
         Ok(items) => success(items),
         Err(_) => failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to fetch reminder items"),
+    }
+}
+
+#[derive(Deserialize)]
+struct ReminderMuteRequest {
+    license_id: i64,
+    kind: String,
+    due_date: String,
+    /// Snooze only. One of 1, 4, 24, 72, 168.
+    #[serde(default)]
+    hours: Option<i64>,
+}
+
+async fn snooze_reminder_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+    Json(payload): Json<ReminderMuteRequest>,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+    let conn = db.lock().await;
+    let owner_id = match resolved_owner(&conn, &user) {
+        Ok(id) => id,
+        Err(error) => return error,
+    };
+    match snooze_reminder(
+        &conn,
+        owner_id,
+        payload.license_id,
+        &payload.kind,
+        &payload.due_date,
+        payload.hours.unwrap_or(24),
+    ) {
+        Ok(()) => success(json!({ "snoozed": true })),
+        Err(error) => failure(StatusCode::BAD_REQUEST, &error.to_string()),
+    }
+}
+
+async fn dismiss_reminder_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+    Json(payload): Json<ReminderMuteRequest>,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+    let conn = db.lock().await;
+    let owner_id = match resolved_owner(&conn, &user) {
+        Ok(id) => id,
+        Err(error) => return error,
+    };
+    match dismiss_reminder(&conn, owner_id, payload.license_id, &payload.kind, &payload.due_date) {
+        Ok(()) => success(json!({ "dismissed": true })),
+        Err(error) => failure(StatusCode::BAD_REQUEST, &error.to_string()),
     }
 }
 

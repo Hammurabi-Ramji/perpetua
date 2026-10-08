@@ -151,6 +151,16 @@ pub fn apply_schema(conn: &Connection) -> Result<()> {
             PRIMARY KEY (license_id, kind)
         );
 
+        CREATE TABLE IF NOT EXISTS reminder_mutes (
+            user_id INTEGER NOT NULL,
+            license_id INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            due_date TEXT NOT NULL,
+            action TEXT NOT NULL,
+            snooze_until TEXT,
+            PRIMARY KEY (user_id, license_id, kind, due_date)
+        );
+
         CREATE TABLE IF NOT EXISTS connected_sites (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,

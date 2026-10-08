@@ -3,10 +3,12 @@
 
 	import {
 		getAccountRecovery,
+		dismissReminder,
 		getReminderSettings,
 		inviteMember,
 		listReminderItems,
 		listVaultMembers,
+		snoozeReminder,
 		redeemInvite,
 		sendTestRecoveryEmail,
 		updateAccountRecovery,
@@ -16,7 +18,38 @@
 	import { entitlement, refreshEntitlement } from '$lib/stores/entitlement';
 	import type { AccountRecoverySettings, ReminderItem, ReminderSettings, VaultMember } from '$lib/types';
 
+	let snoozeHours = '24';
+	let muteBusy = '';
 	let loading = true;
+
+	async function snoozeItem(item: ReminderItem) {
+		muteBusy = `${item.license_id}:${item.kind}:snooze`;
+		error = null;
+		try {
+			await snoozeReminder(item, Number(snoozeHours));
+			items = await listReminderItems();
+			successMessage = `Snoozed ${item.product_name} for ${snoozeHours} hour(s). It will come back for this due date after that. Mark as used is unchanged.`;
+		} catch (muteError) {
+			error = muteError instanceof Error ? muteError.message : 'Could not snooze this reminder';
+		} finally {
+			muteBusy = '';
+		}
+	}
+
+	async function dismissItem(item: ReminderItem) {
+		muteBusy = `${item.license_id}:${item.kind}:dismiss`;
+		error = null;
+		try {
+			await dismissReminder(item);
+			items = await listReminderItems();
+			successMessage = `Dismissed ${item.product_name} for this due date. A later occurrence will still remind you. Mark as used is unchanged.`;
+		} catch (muteError) {
+			error = muteError instanceof Error ? muteError.message : 'Could not dismiss this reminder';
+		} finally {
+			muteBusy = '';
+		}
+	}
+
 	let saving = false;
 	let error: string | null = null;
 	let successMessage = '';
@@ -242,6 +275,21 @@
 	{:else if items.length === 0}
 		<p class="empty-state">Nothing is due soon.</p>
 	{:else}
+		<p class="muted small">
+			Snooze hides a reminder until the duration you pick. Dismiss hides this due date only;
+			a later occurrence still shows. Mark as used, on the license itself, still resets a
+			keep-alive clock and is the default way to record real activity.
+		</p>
+		<label>
+			<span>Snooze duration</span>
+			<select bind:value={snoozeHours}>
+				<option value="1">1 hour</option>
+				<option value="4">4 hours</option>
+				<option value="24">1 day</option>
+				<option value="72">3 days</option>
+				<option value="168">1 week</option>
+			</select>
+		</label>
 		<div class="table-shell">
 			<table>
 				<thead>
@@ -267,7 +315,25 @@
 									{item.status === 'due-today' ? 'Due today' : item.status}
 								</span>
 							</td>
-							<td class="table-action"><a href={`/licenses/${item.license_id}`}>Open</a></td>
+							<td class="table-action">
+								<a href={`/licenses/${item.license_id}`}>Open</a>
+								<button
+									type="button"
+									class="secondary"
+									disabled={muteBusy === `${item.license_id}:${item.kind}:snooze`}
+									on:click={() => snoozeItem(item)}
+								>
+									Snooze
+								</button>
+								<button
+									type="button"
+									class="secondary"
+									disabled={muteBusy === `${item.license_id}:${item.kind}:dismiss`}
+									on:click={() => dismissItem(item)}
+								>
+									Dismiss
+								</button>
+							</td>
 						</tr>
 					{/each}
 				</tbody>

@@ -896,8 +896,126 @@ pub fn get_reminder_items(conn: &Connection, user_id: i64) -> Result<Vec<Reminde
         }
     }
 
+    let mutes = load_reminder_mutes(conn, user_id)?;
+    let now_utc = Utc::now();
+    items.retain(|item| !reminder_is_suppressed(&mutes, item, now_utc));
     items.sort_by_key(|item| (item.days_remaining, item.kind.clone(), item.product_name.clone()));
     Ok(items)
+}
+
+struct ReminderMute {
+    license_id: i64,
+    kind: String,
+    due_date: String,
+    action: String,
+    snooze_until: Option<String>,
+}
+
+fn load_reminder_mutes(conn: &Connection, user_id: i64) -> Result<Vec<ReminderMute>> {
+    let mut stmt = conn.prepare(
+        "SELECT license_id, kind, due_date, action, snooze_until
+         FROM reminder_mutes WHERE user_id = ?",
+    )?;
+    let rows = stmt.query_map(params![user_id], |row| {
+        Ok(ReminderMute {
+            license_id: row.get(0)?,
+            kind: row.get(1)?,
+            due_date: row.get(2)?,
+            action: row.get(3)?,
+            snooze_until: row.get(4)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+fn reminder_is_suppressed(mutes: &[ReminderMute], item: &ReminderItem, now: chrono::DateTime<Utc>) -> bool {
+    let Some(mute) = mutes.iter().find(|mute| {
+        mute.license_id == item.license_id && mute.kind == item.kind && mute.due_date == item.due_date
+    }) else {
+        return false;
+    };
+    match mute.action.as_str() {
+        "dismiss" => true,
+        "snooze" => mute
+            .snooze_until
+            .as_deref()
+            .and_then(|stamp| chrono::DateTime::parse_from_rfc3339(stamp).ok())
+            .map(|until| now < until)
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+const SNOOZE_HOUR_CHOICES: &[i64] = &[1, 4, 24, 72, 168];
+
+fn reminder_kind_ok(kind: &str) -> bool {
+    matches!(kind, "expiry" | "action" | "keepalive")
+}
+
+fn assert_owned_license(conn: &Connection, user_id: i64, license_id: i64) -> Result<()> {
+    let owned: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM licenses WHERE id = ? AND user_id = ?",
+            params![license_id, user_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if owned.is_none() {
+        return Err(anyhow!("License not found."));
+    }
+    Ok(())
+}
+
+/// Hide this reminder occurrence until `hours` from now. A later due date
+/// (the next occurrence) is a different row and shows up normally.
+pub fn snooze_reminder(
+    conn: &Connection,
+    user_id: i64,
+    license_id: i64,
+    kind: &str,
+    due_date: &str,
+    hours: i64,
+) -> Result<()> {
+    if !SNOOZE_HOUR_CHOICES.contains(&hours) {
+        return Err(anyhow!("Snooze duration must be 1, 4, 24, 72, or 168 hours."));
+    }
+    if !reminder_kind_ok(kind) {
+        return Err(anyhow!("Unknown reminder type."));
+    }
+    normalize_date(Some(due_date.to_string()), "due_date")?;
+    assert_owned_license(conn, user_id, license_id)?;
+    let until = (Utc::now() + Duration::hours(hours)).to_rfc3339();
+    conn.execute(
+        "INSERT INTO reminder_mutes (user_id, license_id, kind, due_date, action, snooze_until)
+         VALUES (?, ?, ?, ?, 'snooze', ?)
+         ON CONFLICT(user_id, license_id, kind, due_date) DO UPDATE SET
+           action = 'snooze', snooze_until = excluded.snooze_until",
+        params![user_id, license_id, kind, due_date, until],
+    )?;
+    Ok(())
+}
+
+/// Do not nag again for this exact occurrence. Mark as used is unchanged.
+pub fn dismiss_reminder(
+    conn: &Connection,
+    user_id: i64,
+    license_id: i64,
+    kind: &str,
+    due_date: &str,
+) -> Result<()> {
+    if !reminder_kind_ok(kind) {
+        return Err(anyhow!("Unknown reminder type."));
+    }
+    normalize_date(Some(due_date.to_string()), "due_date")?;
+    assert_owned_license(conn, user_id, license_id)?;
+    conn.execute(
+        "INSERT INTO reminder_mutes (user_id, license_id, kind, due_date, action, snooze_until)
+         VALUES (?, ?, ?, ?, 'dismiss', NULL)
+         ON CONFLICT(user_id, license_id, kind, due_date) DO UPDATE SET
+           action = 'dismiss', snooze_until = NULL",
+        params![user_id, license_id, kind, due_date],
+    )?;
+    Ok(())
 }
 
 /// Items within this many days (including overdue) trigger a background

@@ -13,13 +13,14 @@ use crate::database::{backup_dir_at, db_path_at, init_db_at};
 use crate::models::{AccountRecoverySettings, EnableCloudBackupRequest, LicensePayload};
 use crate::services::{
     activate_pro, add_license, authenticate_user, bump_token_version, collect_due_notifications,
-    confirm_password_reset, create_backup_in_dir, create_jwt, create_user, delete_license,
+    confirm_password_reset, create_backup_in_dir, create_jwt, create_user, delete_license, dismiss_reminder,
     enable_cloud_backup, get_user_by_id,
     export_licenses_csv, export_licenses_json, get_entitlement, get_license_by_id, get_license_stats,
     get_licenses, get_reminder_items, import_licenses_csv, import_licenses_json, list_backups_in_dir,
     mark_email_reminder_sent, mark_license_active, mint_pro_key, pending_email_reminders,
     prepare_invite, prepare_password_reset, redeem_invite,
-    resolve_data_owner_id, restore_vault_from_bytes_at, token_is_current, update_account_recovery_settings,
+    resolve_data_owner_id, restore_vault_from_bytes_at, snooze_reminder, token_is_current,
+    update_account_recovery_settings,
     update_license, update_reminder_settings, verify_jwt, verify_pro_key, FREE_LICENSE_LIMIT,
 };
 
@@ -802,6 +803,89 @@ fn password_reset_round_trip_requires_backup_email_and_smtp() {
 
     // The same code can't be replayed.
     assert!(confirm_password_reset(&conn, "locked-out@example.com", &code, "anotherpass1").is_err());
+}
+
+#[test]
+fn snooze_and_dismiss_hide_one_occurrence_and_mark_used_still_resets() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let user = create_user(&conn, "snooze@example.com", "password123").expect("user");
+    let today = chrono::Utc::now().date_naive();
+    let due = today.format("%Y-%m-%d").to_string();
+    let stale = (today - chrono::Duration::days(40)).format("%Y-%m-%d").to_string();
+
+    let action = add_license(
+        &conn,
+        user.id,
+        LicensePayload {
+            action_required: Some(true),
+            action_description: Some("Redeem now".to_string()),
+            action_deadline: Some(due.clone()),
+            ..sample_license("Redeem Today", None)
+        },
+    )
+    .expect("action license");
+    let keepalive = add_license(
+        &conn,
+        user.id,
+        LicensePayload {
+            keepalive_days: Some(30),
+            last_active: Some(stale),
+            ..sample_license("Idle Tool", None)
+        },
+    )
+    .expect("keepalive license");
+
+    let before = get_reminder_items(&conn, user.id).expect("items");
+    let action_item = before.iter().find(|item| item.license_id == action.id).expect("action due");
+    snooze_reminder(&conn, user.id, action.id, &action_item.kind, &action_item.due_date, 24).expect("snooze");
+    assert!(get_reminder_items(&conn, user.id)
+        .expect("after snooze")
+        .iter()
+        .all(|item| item.license_id != action.id));
+
+    let past = (chrono::Utc::now() - chrono::Duration::hours(2)).to_rfc3339();
+    conn.execute(
+        "UPDATE reminder_mutes SET snooze_until = ?1 WHERE license_id = ?2",
+        rusqlite::params![past, action.id],
+    )
+    .expect("expire snooze");
+    assert!(get_reminder_items(&conn, user.id)
+        .expect("snooze elapsed")
+        .iter()
+        .any(|item| item.license_id == action.id));
+
+    dismiss_reminder(&conn, user.id, action.id, "action", &due).expect("dismiss");
+    assert!(get_reminder_items(&conn, user.id)
+        .expect("dismissed")
+        .iter()
+        .all(|item| item.license_id != action.id));
+
+    let later = (today + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
+    update_license(
+        &conn,
+        user.id,
+        action.id,
+        crate::models::LicenseUpdate {
+            action_deadline: Some(later),
+            ..Default::default()
+        },
+    )
+    .expect("move deadline")
+    .expect("license");
+    assert!(
+        get_reminder_items(&conn, user.id)
+            .expect("new occurrence")
+            .iter()
+            .any(|item| item.license_id == action.id),
+        "a new due date is a new occurrence"
+    );
+
+    let marked = mark_license_active(&conn, user.id, keepalive.id)
+        .expect("mark used")
+        .expect("license");
+    assert_eq!(marked.last_active.as_deref(), Some(due.as_str()));
+    assert!(snooze_reminder(&conn, user.id, action.id, "action", &due, 3).is_err());
 }
 
 #[test]

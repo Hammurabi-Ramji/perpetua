@@ -290,6 +290,29 @@ export function listReminderItems() {
   return request<ReminderItem[]>("/reminders/items");
 }
 
+export function snoozeReminder(item: ReminderItem, hours: number) {
+  return request<{ snoozed: boolean }>("/reminders/snooze", {
+    method: "POST",
+    body: JSON.stringify({
+      license_id: item.license_id,
+      kind: item.kind,
+      due_date: item.due_date,
+      hours,
+    }),
+  });
+}
+
+export function dismissReminder(item: ReminderItem) {
+  return request<{ dismissed: boolean }>("/reminders/dismiss", {
+    method: "POST",
+    body: JSON.stringify({
+      license_id: item.license_id,
+      kind: item.kind,
+      due_date: item.due_date,
+    }),
+  });
+}
+
 export function exportLicensesJson() {
   return request<VaultExportFile>("/vault/export/json");
 }
