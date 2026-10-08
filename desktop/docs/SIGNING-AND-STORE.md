@@ -83,9 +83,12 @@ See "Store packaging" below. Human steps: Partner Center registration, reserve t
 
 ## GitHub Actions secrets
 
-Names for `.github/workflows/release.yml` (workflow is **not** modified by
-this change; add these to the Windows build step when you are ready).
-Existing secrets: `PERPETUA_LICENSE_SECRET`, `POLAR_ORGANIZATION_ID`.
+Names for `.github/workflows/release.yml`. The Windows job installs
+`trusted-signing-cli` and passes the Azure secrets below.
+`PERPETUA_REQUIRE_SIGNING` is `1` on Windows only when
+`PERPETUA_AZURE_SIGNING_ENDPOINT` is non-empty, so a release still builds
+before that account exists. Existing secrets: `PERPETUA_LICENSE_SECRET`,
+`POLAR_ORGANIZATION_ID`.
 
 | Secret | Used for |
 |--------|----------|
@@ -94,7 +97,9 @@ Existing secrets: `PERPETUA_LICENSE_SECRET`, `POLAR_ORGANIZATION_ID`.
 | `PERPETUA_SIGN_PFX_BASE64`, `PERPETUA_SIGN_PFX_PASSWORD` | PFX path (only if you hold an exportable PFX) |
 | `PERPETUA_SIGN_CERT_THUMBPRINT` | self-hosted runner with the cert installed |
 
-Example for the Windows leg of the `build` job (sketch, not applied):
+The Windows build step sets `PERPETUA_REQUIRE_SIGNING` only when the Azure
+endpoint secret is present (the sketch below always set it to `1`, which
+would fail every Windows release before the account exists):
 
 ```yaml
       - name: Install trusted-signing-cli
@@ -106,7 +111,7 @@ Example for the Windows leg of the `build` job (sketch, not applied):
         env:
           POLAR_ORGANIZATION_ID: ${{ secrets.POLAR_ORGANIZATION_ID }}
           PERPETUA_LICENSE_SECRET: ${{ secrets.PERPETUA_LICENSE_SECRET }}
-          PERPETUA_REQUIRE_SIGNING: ${{ matrix.platform == 'windows-latest' && '1' || '' }}
+          PERPETUA_REQUIRE_SIGNING: ${{ matrix.platform == 'windows-latest' && secrets.PERPETUA_AZURE_SIGNING_ENDPOINT != '' && '1' || '' }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
@@ -120,10 +125,8 @@ Example for the Windows leg of the `build` job (sketch, not applied):
         run: ./scripts/Write-Checksums.ps1 -ShowSignature
 ```
 
-Add `desktop/src-tauri/target/release/bundle/SHA256SUMS.txt` to the "Stash
-installers" artifact paths so the `publish` job attaches it to the release.
-Keep `PERPETUA_REQUIRE_SIGNING` empty (or unset) until signing is actually
-configured, otherwise the Windows job will (intentionally) fail. Secrets are
+`PERPETUA_REQUIRE_SIGNING` stays empty until `PERPETUA_AZURE_SIGNING_ENDPOINT`
+is set, otherwise the Windows job will (intentionally) fail. Secrets are
 not available to workflows triggered by pull requests from forks, which is the
 desired behaviour.
 
