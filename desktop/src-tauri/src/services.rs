@@ -1966,12 +1966,14 @@ pub struct CloudSyncContext {
 }
 
 pub fn get_cloud_backup_settings(conn: &Connection, user_id: i64) -> Result<CloudBackupSettings> {
-    Ok(conn
+    let mut settings = conn
         .query_row(
-            "SELECT enabled, webdav_url, webdav_username, remote_path, recovery_key_generated_at, last_synced_at, last_sync_error
+            "SELECT enabled, webdav_url, webdav_username, remote_path, recovery_key_generated_at, last_synced_at, last_sync_error,
+                    schedule_enabled, schedule_interval_hours
              FROM cloud_backup_settings WHERE user_id = ?",
             params![user_id],
             |row| {
+                let hours: i64 = row.get(8)?;
                 Ok(CloudBackupSettings {
                     enabled: bool_from_sql(row.get(0)?),
                     webdav_url: row.get(1)?,
@@ -1980,11 +1982,17 @@ pub fn get_cloud_backup_settings(conn: &Connection, user_id: i64) -> Result<Clou
                     recovery_key_generated_at: row.get(4)?,
                     last_synced_at: row.get(5)?,
                     last_sync_error: row.get(6)?,
+                    schedule_enabled: bool_from_sql(row.get(7)?),
+                    schedule_interval_hours: if hours > 0 { hours } else { 24 },
                 })
             },
         )
         .optional()?
-        .unwrap_or_default())
+        .unwrap_or_default();
+    if settings.schedule_interval_hours <= 0 {
+        settings.schedule_interval_hours = 24;
+    }
+    Ok(settings)
 }
 
 /// Enables (or updates) cloud backup. The AES-256 recovery key is generated the
@@ -2118,11 +2126,98 @@ pub fn prepare_cloud_sync(conn: &Connection, user_id: i64) -> Result<CloudSyncCo
 /// upload completes. Called under a fresh, brief lock, separate from
 /// `prepare_cloud_sync`.
 pub fn record_cloud_sync_result(conn: &Connection, user_id: i64, error: Option<&str>) -> Result<()> {
-    conn.execute(
-        "UPDATE cloud_backup_settings SET last_synced_at = ?, last_sync_error = ? WHERE user_id = ?",
-        params![now_string(), error, user_id],
-    )?;
+    if let Some(error) = error {
+        crate::diag::log(&format!("cloud backup failed for user {user_id}: {error}"));
+        conn.execute(
+            "UPDATE cloud_backup_settings SET last_sync_error = ? WHERE user_id = ?",
+            params![error, user_id],
+        )?;
+    } else {
+        conn.execute(
+            "UPDATE cloud_backup_settings SET last_synced_at = ?, last_sync_error = NULL WHERE user_id = ?",
+            params![now_string(), user_id],
+        )?;
+    }
     Ok(())
+}
+
+pub const CLOUD_SCHEDULE_HOURS: &[i64] = &[6, 12, 24, 168];
+
+/// Whether a scheduled upload should run. Off unless the user opted in.
+/// A missing or unparseable last-success time is due; a recent success is not.
+pub fn cloud_schedule_due(
+    enabled: bool,
+    interval_hours: i64,
+    last_synced_at: Option<&str>,
+    now: chrono::DateTime<Utc>,
+) -> bool {
+    if !enabled {
+        return false;
+    }
+    let hours = if CLOUD_SCHEDULE_HOURS.contains(&interval_hours) {
+        interval_hours
+    } else {
+        24
+    };
+    let Some(stamp) = last_synced_at.filter(|value| !value.is_empty()) else {
+        return true;
+    };
+    let Ok(synced) = chrono::DateTime::parse_from_rfc3339(stamp) else {
+        return true;
+    };
+    now.signed_duration_since(synced.with_timezone(&Utc)) >= Duration::hours(hours)
+}
+
+pub fn set_cloud_schedule(
+    conn: &Connection,
+    user_id: i64,
+    enabled: bool,
+    interval_hours: i64,
+) -> Result<CloudBackupSettings> {
+    if !is_pro(conn)? {
+        return Err(anyhow!("Cloud backup is a Pro feature."));
+    }
+    if enabled && !CLOUD_SCHEDULE_HOURS.contains(&interval_hours) {
+        return Err(anyhow!("Schedule interval must be 6, 12, 24, or 168 hours."));
+    }
+    let hours = if CLOUD_SCHEDULE_HOURS.contains(&interval_hours) {
+        interval_hours
+    } else {
+        24
+    };
+    let changed = conn.execute(
+        "UPDATE cloud_backup_settings
+         SET schedule_enabled = ?, schedule_interval_hours = ?
+         WHERE user_id = ? AND enabled = 1",
+        params![enabled as i64, hours, user_id],
+    )?;
+    if changed == 0 {
+        return Err(anyhow!("Turn on cloud backup before scheduling it."));
+    }
+    get_cloud_backup_settings(conn, user_id)
+}
+
+pub fn users_due_for_scheduled_sync(conn: &Connection, now: chrono::DateTime<Utc>) -> Result<Vec<i64>> {
+    let mut stmt = conn.prepare(
+        "SELECT user_id, schedule_interval_hours, last_synced_at
+         FROM cloud_backup_settings
+         WHERE enabled = 1 AND schedule_enabled = 1",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, Option<String>>(2)?,
+        ))
+    })?;
+    let mut due = Vec::new();
+    for row in rows {
+        let (user_id, hours, last_synced) = row?;
+        if cloud_schedule_due(true, hours, last_synced.as_deref(), now) {
+            due.push(user_id);
+        }
+    }
+    Ok(due)
 }
 
 /// Replaces the live vault database with `plaintext` (a decrypted backup

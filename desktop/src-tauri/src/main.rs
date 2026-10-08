@@ -446,6 +446,47 @@ fn spawn_reminder_scheduler(handle: tauri::AppHandle) {
                 }
             }
 
+            // Scheduled cloud backup is an opt-in upload of the same single
+            // WebDAV object. It is not live multi-device sync. A failed upload
+            // is logged and leaves last_synced_at (and the previous remote
+            // object) alone.
+            let due_users = {
+                let conn = state.db.lock().await;
+                match services::users_due_for_scheduled_sync(&conn, chrono::Utc::now()) {
+                    Ok(users) => users,
+                    Err(error) => {
+                        diag::log(&format!("scheduled cloud backup check failed: {error:#}"));
+                        Vec::new()
+                    }
+                }
+            };
+            for user_id in due_users {
+                let prepared = {
+                    let conn = state.db.lock().await;
+                    services::prepare_cloud_sync(&conn, user_id)
+                };
+                let upload_result = match prepared {
+                    Ok(context) => match std::fs::read(&context.backup_path) {
+                        Ok(bytes) => {
+                            let target = cloud_backup::WebDavTarget {
+                                base_url: &context.webdav_url,
+                                username: &context.webdav_username,
+                                password: &context.webdav_password,
+                                remote_path: &context.remote_path,
+                            };
+                            cloud_backup::upload(&target, &context.recovery_key, &bytes).await
+                        }
+                        Err(error) => Err(anyhow::anyhow!("failed to read local backup: {error}")),
+                    },
+                    Err(error) => Err(error),
+                };
+                let conn = state.db.lock().await;
+                let message = upload_result.as_ref().err().map(|error| error.to_string());
+                if let Err(error) = services::record_cloud_sync_result(&conn, user_id, message.as_deref()) {
+                    diag::log(&format!("could not record scheduled cloud backup: {error:#}"));
+                }
+            }
+
             tokio::time::sleep(INTERVAL).await;
         }
     });

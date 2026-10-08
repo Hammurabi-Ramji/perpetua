@@ -806,6 +806,41 @@ fn password_reset_round_trip_requires_backup_email_and_smtp() {
 }
 
 #[test]
+fn cloud_schedule_defaults_off_and_a_failure_keeps_the_last_success() {
+    use crate::services::{cloud_schedule_due, get_cloud_backup_settings, record_cloud_sync_result, users_due_for_scheduled_sync};
+    let now = chrono::Utc::now();
+    assert!(!cloud_schedule_due(false, 24, None, now));
+    assert!(cloud_schedule_due(true, 24, None, now));
+    let recent = now.to_rfc3339();
+    assert!(!cloud_schedule_due(true, 24, Some(&recent), now));
+    let old = (now - chrono::Duration::hours(25)).to_rfc3339();
+    assert!(cloud_schedule_due(true, 24, Some(&old), now));
+
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let user = create_user(&conn, "sched@example.com", "password123").expect("user");
+    conn.execute(
+        "INSERT INTO cloud_backup_settings (user_id, enabled, webdav_url, remote_path, last_synced_at)
+         VALUES (?1, 1, 'https://dav.example', '/perpetua-backups', ?2)",
+        rusqlite::params![user.id, old],
+    )
+    .expect("settings");
+    assert!(users_due_for_scheduled_sync(&conn, now).expect("due").is_empty());
+    conn.execute(
+        "UPDATE cloud_backup_settings SET schedule_enabled = 1, schedule_interval_hours = 24 WHERE user_id = ?1",
+        rusqlite::params![user.id],
+    )
+    .expect("opt in");
+    assert_eq!(users_due_for_scheduled_sync(&conn, now).expect("due"), vec![user.id]);
+    record_cloud_sync_result(&conn, user.id, Some("network down")).expect("record");
+    let settings = get_cloud_backup_settings(&conn, user.id).expect("settings");
+    assert_eq!(settings.last_synced_at.as_deref(), Some(old.as_str()));
+    assert_eq!(settings.last_sync_error.as_deref(), Some("network down"));
+    assert!(settings.schedule_enabled);
+    assert!(!settings.last_synced_at.as_deref().unwrap().is_empty());
+}
+
+#[test]
 fn activity_visit_resets_keepalive_only_when_opted_in_and_stores_no_host() {
     let temp = tempdir().expect("temp dir");
     let conn = init_db_at(temp.path()).expect("db");

@@ -285,6 +285,16 @@ pub struct CloudBackupSettings {
     pub recovery_key_generated_at: Option<String>,
     pub last_synced_at: Option<String>,
     pub last_sync_error: Option<String>,
+    /// Opt-in upload on a timer. Off unless the user turns it on.
+    #[serde(default)]
+    pub schedule_enabled: bool,
+    /// Hours between scheduled uploads. 24 when unset.
+    #[serde(default = "default_schedule_interval_hours")]
+    pub schedule_interval_hours: i64,
+}
+
+fn default_schedule_interval_hours() -> i64 {
+    24
 }
 
 #[derive(Serialize, Deserialize, Debug)]

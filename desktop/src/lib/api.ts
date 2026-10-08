@@ -362,6 +362,13 @@ export function syncCloudBackupNow() {
   return request<CloudBackupSettings>("/cloud-backup/sync", { method: "POST" });
 }
 
+export function setCloudSchedule(enabled: boolean, intervalHours: number) {
+  return request<CloudBackupSettings>("/cloud-backup/schedule", {
+    method: "POST",
+    body: JSON.stringify({ enabled, interval_hours: intervalHours }),
+  });
+}
+
 /** Unauthenticated: tells the login page whether this install already holds a vault. */
 export function getVaultStatus() {
   return request<VaultStatus>("/vault/status");

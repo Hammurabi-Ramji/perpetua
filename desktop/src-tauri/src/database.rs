@@ -250,6 +250,14 @@ pub fn apply_schema(conn: &Connection) -> Result<()> {
     // (NULL expires_at) simply can no longer be redeemed — fail closed rather
     // than treating them as never-expiring.
     let _ = conn.execute("ALTER TABLE vault_members ADD COLUMN expires_at TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE cloud_backup_settings ADD COLUMN schedule_enabled INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE cloud_backup_settings ADD COLUMN schedule_interval_hours INTEGER NOT NULL DEFAULT 24",
+        [],
+    );
 
     // One-time: desktop reminders are now actually gated on the
     // `browser_notifications` preference (they used to fire regardless of it).

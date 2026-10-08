@@ -26,6 +26,7 @@ use crate::services::{
     get_user_by_id, import_licenses_csv, import_licenses_json, list_backups, list_site_connections,
     list_vault_members, mark_license_active, mark_onboarding_complete, mark_pro_activated,
     prepare_cloud_sync, prepare_invite, prepare_password_reset, record_cloud_sync_result,
+    set_cloud_schedule,
     redeem_invite, resolve_data_owner_id, restore_vault_from_bytes, snooze_reminder, token_is_current,
     bump_token_version, update_account_recovery_settings, update_license, update_reminder_settings,
     validate_credentials, vault_has_users, verify_jwt, FreeLimitReached,
@@ -141,6 +142,7 @@ pub(crate) fn build_router(db: Arc<Mutex<Connection>>, jwt_secret: Arc<String>) 
         .route("/api/cloud-backup/settings", get(get_cloud_backup_settings_route))
         .route("/api/cloud-backup/enable", post(enable_cloud_backup_route))
         .route("/api/cloud-backup/sync", post(sync_cloud_backup_route))
+        .route("/api/cloud-backup/schedule", post(set_cloud_schedule_route))
         .route("/api/cloud-backup/restore", post(restore_cloud_backup_route))
         .route("/api/reminders/items", get(get_reminder_items_route))
         .route("/api/reminders/snooze", post(snooze_reminder_route))
@@ -1352,6 +1354,30 @@ async fn enable_cloud_backup_route(
         },
     };
     success(result)
+}
+
+#[derive(Deserialize)]
+struct CloudScheduleRequest {
+    enabled: bool,
+    #[serde(default)]
+    interval_hours: i64,
+}
+
+async fn set_cloud_schedule_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+    Json(payload): Json<CloudScheduleRequest>,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+    let hours = if payload.interval_hours == 0 { 24 } else { payload.interval_hours };
+    let conn = db.lock().await;
+    match set_cloud_schedule(&conn, user.id, payload.enabled, hours) {
+        Ok(settings) => success(settings),
+        Err(error) => failure(StatusCode::BAD_REQUEST, &error.to_string()),
+    }
 }
 
 async fn sync_cloud_backup_route(

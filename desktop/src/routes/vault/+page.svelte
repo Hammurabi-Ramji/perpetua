@@ -12,6 +12,7 @@
 		revokeExtensionToken,
 		listBackups,
 		restoreCloudBackup,
+		setCloudSchedule,
 		syncCloudBackupNow
 	} from '$lib/api';
 	import { auth } from '$lib/stores/auth';
@@ -36,6 +37,9 @@
 	let remotePath = '/perpetua-backups';
 	let cloudBusy = false;
 	let cloudSyncBusy = false;
+	let scheduleEnabled = false;
+	let scheduleHours = 24;
+	let scheduleBusy = false;
 	let cloudError = '';
 	let cloudMessage = '';
 	// Opt-in: minting a new key orphans every backup already uploaded with the old one.
@@ -237,6 +241,8 @@
 			if (cloudSettings.webdav_url) webdavUrl = cloudSettings.webdav_url;
 			if (cloudSettings.webdav_username) webdavUsername = cloudSettings.webdav_username;
 			if (cloudSettings.remote_path) remotePath = cloudSettings.remote_path;
+			scheduleEnabled = cloudSettings.schedule_enabled === true;
+			scheduleHours = cloudSettings.schedule_interval_hours || 24;
 		} catch {
 			cloudSettings = null;
 		}
@@ -272,6 +278,23 @@
 			}
 		} finally {
 			cloudBusy = false;
+		}
+	}
+
+	async function handleSaveSchedule() {
+		scheduleBusy = true;
+		cloudError = '';
+		cloudMessage = '';
+		try {
+			cloudSettings = await setCloudSchedule(scheduleEnabled, Number(scheduleHours));
+			scheduleEnabled = cloudSettings.schedule_enabled === true;
+			cloudMessage = scheduleEnabled
+				? `Scheduled upload is on, every ${scheduleHours} hours. This uploads the same backup. It is not live sync between devices. A failed upload is logged and leaves the previous cloud copy in place.`
+				: 'Scheduled upload is off. Cloud backup still runs only when you click Back up to cloud now.';
+		} catch (scheduleError) {
+			cloudError = scheduleError instanceof Error ? scheduleError.message : 'Could not save the schedule';
+		} finally {
+			scheduleBusy = false;
 		}
 	}
 
@@ -517,6 +540,29 @@
 		{/if}
 
 		{#if cloudSettings?.enabled}
+			<div class="launch-row">
+				<label class="checkbox-row">
+					<input type="checkbox" bind:checked={scheduleEnabled} />
+					<span>Upload on a schedule (off by default)</span>
+				</label>
+				<label>
+					<span>Interval</span>
+					<select bind:value={scheduleHours}>
+						<option value={6}>Every 6 hours</option>
+						<option value={12}>Every 12 hours</option>
+						<option value={24}>Every 24 hours</option>
+						<option value={168}>Every 7 days</option>
+					</select>
+				</label>
+				<p class="muted small">
+					Uses the same WebDAV upload as the button above, still one remote copy. This is not
+					live multi-device sync. If an upload fails, Perpetua logs it and does not replace the
+					previous good backup.
+				</p>
+				<button type="button" class="secondary" disabled={scheduleBusy} on:click={handleSaveSchedule}>
+					{scheduleBusy ? 'Saving…' : 'Save schedule'}
+				</button>
+			</div>
 			<p class="muted small" style="margin-top: 1rem;">
 				{#if cloudSettings.last_synced_at}
 					Last backed up {new Date(cloudSettings.last_synced_at).toLocaleString()}.

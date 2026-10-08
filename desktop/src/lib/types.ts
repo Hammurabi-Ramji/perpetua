@@ -144,6 +144,8 @@ export interface CloudBackupSettings {
   recovery_key_generated_at: string | null;
   last_synced_at: string | null;
   last_sync_error: string | null;
+  schedule_enabled?: boolean;
+  schedule_interval_hours?: number;
 }
 
 export interface EnableCloudBackupInput {

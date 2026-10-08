@@ -274,6 +274,46 @@ mod tests {
         assert!(validate_server_url("not a url").is_err());
     }
 
+    #[tokio::test]
+    async fn failed_upload_does_not_replace_the_previous_object() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        let replaced = Arc::new(AtomicBool::new(false));
+        let flag = replaced.clone();
+        let app = axum::Router::new()
+            .route(
+                "/dav/backups/perpetua-backup-latest.enc.uploading",
+                axum::routing::put(|| async { axum::http::StatusCode::INTERNAL_SERVER_ERROR }),
+            )
+            .route(
+                "/dav/backups/perpetua-backup-latest.enc",
+                axum::routing::put(move || {
+                    let flag = flag.clone();
+                    async move {
+                        flag.store(true, Ordering::SeqCst);
+                        axum::http::StatusCode::CREATED
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve");
+        });
+
+        let base = format!("http://127.0.0.1:{port}/dav");
+        let target = WebDavTarget {
+            base_url: &base,
+            username: "user",
+            password: "secret",
+            remote_path: "/backups",
+        };
+        let key = generate_recovery_key();
+        let error = upload(&target, &key, b"new-bytes").await.expect_err("upload must fail");
+        assert!(error.to_string().contains("500") || error.to_string().contains("INTERNAL"));
+        assert!(!replaced.load(Ordering::SeqCst), "previous remote object must stay put");
+    }
+
     #[test]
     fn decrypt_fails_on_tampered_ciphertext() {
         let key = generate_recovery_key();
