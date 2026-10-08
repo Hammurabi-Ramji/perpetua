@@ -3,20 +3,102 @@
 
 	import {
 		getAccountRecovery,
+		dismissReminder,
+		getActivityInference,
 		getReminderSettings,
 		inviteMember,
+		listAutoMaintain,
 		listReminderItems,
 		listVaultMembers,
+		snoozeReminder,
 		redeemInvite,
 		sendTestRecoveryEmail,
+		setActivityInference,
+		setAutoMaintain,
 		updateAccountRecovery,
 		updateReminderSettings
 	} from '$lib/api';
-	import { SUPPORT_EMAIL } from '$lib/commerce';
 	import { entitlement, refreshEntitlement } from '$lib/stores/entitlement';
-	import type { AccountRecoverySettings, ReminderItem, ReminderSettings, VaultMember } from '$lib/types';
+	import type {
+		AccountRecoverySettings,
+		AutoMaintainLicense,
+		ReminderItem,
+		ReminderSettings,
+		VaultMember
+	} from '$lib/types';
 
+	let maintain: AutoMaintainLicense[] = [];
+	let maintainDrafts: Record<number, { username: string; password: string }> = {};
+	let maintainBusy = 0;
+	let activityInference = false;
+	let activityBusy = false;
+	let snoozeHours = '24';
+	let muteBusy = '';
 	let loading = true;
+
+	async function saveMaintain(row: AutoMaintainLicense, enabled: boolean) {
+		maintainBusy = row.license_id;
+		error = null;
+		const draft = maintainDrafts[row.license_id] ?? { username: '', password: '' };
+		try {
+			const saved = await setAutoMaintain(row.license_id, enabled, draft.username, draft.password);
+			maintain = maintain.map((item) => (item.license_id === saved.license_id ? saved : item));
+			maintainDrafts[row.license_id] = { username: draft.username, password: '' };
+			successMessage = enabled
+				? `${row.product_name} is opted in. The password stays in the OS keychain. Perpetua will not log in for you; the attempt is recorded and the normal reminder still fires.`
+				: `${row.product_name} Auto-Maintain opt-in is off.`;
+		} catch (maintainError) {
+			error = maintainError instanceof Error ? maintainError.message : 'Could not update Auto-Maintain';
+		} finally {
+			maintainBusy = 0;
+		}
+	}
+
+	async function saveActivityInference(event: Event) {
+		const enabled = (event.currentTarget as HTMLInputElement).checked;
+		activityBusy = true;
+		error = null;
+		try {
+			activityInference = (await setActivityInference(enabled)).enabled;
+			successMessage = enabled
+				? 'Activity inference is on. A visit to a matching hostname can reset that license the same way Mark as used does. Only the date is stored.'
+				: 'Activity inference is off. Keep-alive clocks change only when you use Mark as used.';
+		} catch (activityError) {
+			activityInference = !enabled;
+			error = activityError instanceof Error ? activityError.message : 'Could not update activity inference';
+		} finally {
+			activityBusy = false;
+		}
+	}
+
+	async function snoozeItem(item: ReminderItem) {
+		muteBusy = `${item.license_id}:${item.kind}:snooze`;
+		error = null;
+		try {
+			await snoozeReminder(item, Number(snoozeHours));
+			items = await listReminderItems();
+			successMessage = `Snoozed ${item.product_name} for ${snoozeHours} hour(s). It will come back for this due date after that. Mark as used is unchanged.`;
+		} catch (muteError) {
+			error = muteError instanceof Error ? muteError.message : 'Could not snooze this reminder';
+		} finally {
+			muteBusy = '';
+		}
+	}
+
+	async function dismissItem(item: ReminderItem) {
+		muteBusy = `${item.license_id}:${item.kind}:dismiss`;
+		error = null;
+		try {
+			await dismissReminder(item);
+			items = await listReminderItems();
+			successMessage = `Dismissed ${item.product_name} for this due date. A later occurrence will still remind you. Mark as used is unchanged.`;
+		} catch (muteError) {
+			error = muteError instanceof Error ? muteError.message : 'Could not dismiss this reminder';
+		} finally {
+			muteBusy = '';
+		}
+	}
+
 	let saving = false;
 	let error: string | null = null;
 	let successMessage = '';
@@ -130,9 +212,16 @@
 			};
 			items = reminderItems;
 			recovery = toRecoveryForm(recoveryLoaded);
+			activityInference = (await getActivityInference()).enabled;
 			await Promise.all([refreshEntitlement(), loadLaunchAtLogin()]);
 			if ($entitlement?.pro) {
 				members = await listVaultMembers();
+				maintain = await listAutoMaintain();
+				maintainDrafts = Object.fromEntries(
+					maintain.map((row) => [row.license_id, { username: '', password: '' }])
+				);
+			} else {
+				maintain = [];
 			}
 		} catch (loadError) {
 			error = loadError instanceof Error ? loadError.message : 'Failed to load reminder settings';
@@ -151,7 +240,9 @@
 				...saved,
 				notification_email: saved.notification_email ?? ''
 			};
-			successMessage = 'Reminder settings saved locally.';
+			successMessage = saved.email_notifications
+				? 'Reminder settings saved. Due reminders will be emailed through your SMTP relay when they are due. Nothing is sent just by saving this.'
+				: 'Reminder settings saved.';
 		} catch (saveError) {
 			error = saveError instanceof Error ? saveError.message : 'Failed to update reminder settings';
 		} finally {
@@ -240,6 +331,21 @@
 	{:else if items.length === 0}
 		<p class="empty-state">Nothing is due soon.</p>
 	{:else}
+		<p class="muted small">
+			Snooze hides a reminder until the duration you pick. Dismiss hides this due date only;
+			a later occurrence still shows. Mark as used, on the license itself, still resets a
+			keep-alive clock and is the default way to record real activity.
+		</p>
+		<label>
+			<span>Snooze duration</span>
+			<select bind:value={snoozeHours}>
+				<option value="1">1 hour</option>
+				<option value="4">4 hours</option>
+				<option value="24">1 day</option>
+				<option value="72">3 days</option>
+				<option value="168">1 week</option>
+			</select>
+		</label>
 		<div class="table-shell">
 			<table>
 				<thead>
@@ -265,7 +371,25 @@
 									{item.status === 'due-today' ? 'Due today' : item.status}
 								</span>
 							</td>
-							<td class="table-action"><a href={`/licenses/${item.license_id}`}>Open</a></td>
+							<td class="table-action">
+								<a href={`/licenses/${item.license_id}`}>Open</a>
+								<button
+									type="button"
+									class="secondary"
+									disabled={muteBusy === `${item.license_id}:${item.kind}:snooze`}
+									on:click={() => snoozeItem(item)}
+								>
+									Snooze
+								</button>
+								<button
+									type="button"
+									class="secondary"
+									disabled={muteBusy === `${item.license_id}:${item.kind}:dismiss`}
+									on:click={() => dismissItem(item)}
+								>
+									Dismiss
+								</button>
+							</td>
 						</tr>
 					{/each}
 				</tbody>
@@ -291,6 +415,22 @@
 				<span>Desktop reminders</span>
 			</label>
 
+			<label class="checkbox">
+				<input
+					type="checkbox"
+					checked={activityInference}
+					disabled={activityBusy}
+					on:change={saveActivityInference}
+				/>
+				<span>Reset keep-alive when I visit a matching site</span>
+			</label>
+			<p class="muted small">
+				Off by default. When this is on, the browser extension can tell Perpetua that you opened a
+				hostname matching one of your licenses. Perpetua stores only the same date Mark as used
+				stores — not the page address, title, or anything from an inbox. Mark as used stays on the
+				license and remains the default.
+			</p>
+
 			<p class="muted small">
 				Every few hours Perpetua checks for expiries, action deadlines and keep-alive windows and
 				shows a native desktop notification for anything due in the next 7 days. It keeps watch
@@ -298,12 +438,25 @@
 				the queue above still updates.
 			</p>
 
-			<!--
-				Email reminders are intentionally not offered: Perpetua has no mail
-				service, and the user's own SMTP relay (below) is only used for
-				password-reset codes and recovery keys. A toggle that did nothing
-				would be a false promise.
-			-->
+			<label class="checkbox">
+				<input
+					bind:checked={settings.email_notifications}
+					type="checkbox"
+					disabled={!recovery.smtp_host}
+				/>
+				<span>Email due reminders through my SMTP relay</span>
+			</label>
+			<p class="muted small">
+				{#if recovery.smtp_host}
+					When a reminder is due, Perpetua sends it with the SMTP relay saved below, to your
+					backup email (or your account email if you have not set one). Saving this does not
+					send a message. If the relay rejects the message, Perpetua logs the failure and does
+					not treat it as delivered. Perpetua does not run a mail server.
+				{:else}
+					Set the SMTP relay under Backup email &amp; account recovery before turning this on.
+					Until then Perpetua will not pretend an email was sent.
+				{/if}
+			</p>
 
 			<div class="actions">
 				<button type="submit" disabled={saving}>{saving ? 'Saving...' : 'Save reminder settings'}</button>
@@ -481,23 +634,61 @@
 <section class="panel">
 	<div class="panel-heading">
 		<div>
-			<h3>Auto-Maintain <span class="soon-badge">Coming soon · Pro</span></h3>
+			<h3>Auto-Maintain</h3>
 			<p class="muted">
-				Let Perpetua keep deal accounts alive for you — automatically completing periodic
-				logins and redemption steps for vendors that require them, so a lifetime deal never
-				lapses for inactivity.
+				Optional, Pro, and off until you turn it on for a specific license. Perpetua can store a
+				vendor username and password in the operating system keychain. It does not log into the
+				vendor, submit that password, or bypass 2FA or CAPTCHA. Each attempt is recorded and falls
+				back to the normal keep-alive reminder.
 			</p>
 		</div>
 	</div>
-	<!--
-		No "Notify me" button: Perpetua has no telemetry or mailing list, so a
-		button that only flipped a local flag would have been a false promise.
-		Interest goes to a real mailbox instead.
-	-->
-	<p class="muted small">
-		Want this? Email <a href={`mailto:${SUPPORT_EMAIL}?subject=Auto-Maintain%20interest`}>{SUPPORT_EMAIL}</a>
-		with the vendors you'd use it for — that's what decides the build order.
-	</p>
+	{#if $entitlement?.pro}
+		{#if maintain.length === 0}
+			<p class="empty-state">Add a license before opting it in.</p>
+		{:else}
+			<div class="stack">
+				{#each maintain as row (row.license_id)}
+					<div class="license-card">
+						<div>
+							<h4>{row.product_name}</h4>
+							<p class="muted small">
+								{row.credential_set
+									? 'A vendor password is stored in the OS keychain. It is not shown here.'
+									: 'No vendor password stored.'}
+							</p>
+							<label>
+								<span>Vendor username</span>
+								<input bind:value={maintainDrafts[row.license_id].username} autocomplete="off" />
+							</label>
+							<label>
+								<span>Vendor password</span>
+								<input
+									bind:value={maintainDrafts[row.license_id].password}
+									type="password"
+									autocomplete="new-password"
+									placeholder={row.credential_set ? 'Saved — leave blank to keep' : 'Stored only in the OS keychain'}
+								/>
+							</label>
+						</div>
+						<button
+							type="button"
+							class="secondary"
+							disabled={maintainBusy === row.license_id}
+							on:click={() => saveMaintain(row, !row.enabled)}
+						>
+							{row.enabled ? 'Turn off' : 'Opt in'}
+						</button>
+					</div>
+				{/each}
+			</div>
+		{/if}
+	{:else}
+		<p class="empty-state">
+			Auto-Maintain is a one-time Pro license feature, and it stays off unless you opt in per
+			license after upgrading. It is not included with the free vault.
+		</p>
+	{/if}
 </section>
 
 <style>

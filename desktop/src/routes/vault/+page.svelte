@@ -9,9 +9,12 @@
 		getCloudBackupSettings,
 		getStoredToken,
 		importLicenses,
+		revokeExtensionToken,
 		listBackups,
 		restoreCloudBackup,
-		syncCloudBackupNow
+		setCloudSchedule,
+		syncCloudBackupNow,
+		syncDevices
 	} from '$lib/api';
 	import { auth } from '$lib/stores/auth';
 	import { entitlement, handleAddError, refreshEntitlement } from '$lib/stores/entitlement';
@@ -35,6 +38,10 @@
 	let remotePath = '/perpetua-backups';
 	let cloudBusy = false;
 	let cloudSyncBusy = false;
+	let scheduleEnabled = false;
+	let scheduleHours = 24;
+	let scheduleBusy = false;
+	let deviceSyncBusy = false;
 	let cloudError = '';
 	let cloudMessage = '';
 	// Opt-in: minting a new key orphans every backup already uploaded with the old one.
@@ -105,9 +112,27 @@
 
 	let extensionTokenRevealed = false;
 	let extensionTokenMessage = '';
+	let revokeBusy = false;
 
 	function revealExtensionToken() {
 		extensionTokenRevealed = true;
+	}
+
+	async function revokeExtension() {
+		revokeBusy = true;
+		extensionTokenMessage = '';
+		error = null;
+		try {
+			const session = await revokeExtensionToken();
+			auth.replaceSession(session.token, session.user);
+			extensionTokenRevealed = true;
+			extensionTokenMessage =
+				'Extension token revoked. The token shown below is a new desktop session — paste it into the extension only if you still want it paired.';
+		} catch (revokeError) {
+			error = revokeError instanceof Error ? revokeError.message : 'Could not revoke the extension token';
+		} finally {
+			revokeBusy = false;
+		}
 	}
 
 	async function copyExtensionToken() {
@@ -218,6 +243,8 @@
 			if (cloudSettings.webdav_url) webdavUrl = cloudSettings.webdav_url;
 			if (cloudSettings.webdav_username) webdavUsername = cloudSettings.webdav_username;
 			if (cloudSettings.remote_path) remotePath = cloudSettings.remote_path;
+			scheduleEnabled = cloudSettings.schedule_enabled === true;
+			scheduleHours = cloudSettings.schedule_interval_hours || 24;
 		} catch {
 			cloudSettings = null;
 		}
@@ -253,6 +280,49 @@
 			}
 		} finally {
 			cloudBusy = false;
+		}
+	}
+
+	async function handleDeviceSync() {
+		deviceSyncBusy = true;
+		cloudError = '';
+		cloudMessage = '';
+		try {
+			const result = await syncDevices();
+			if (result.action === 'download') {
+				cloudMessage =
+					'The cloud copy was newer, so this computer was updated from it. A snapshot of the previous vault was kept. Last write wins by vault timestamp.';
+			} else if (result.action === 'upload') {
+				cloudMessage =
+					'This computer was newer, so its vault was uploaded. The local vault was not replaced.';
+			} else {
+				cloudMessage = 'Both copies have the same timestamp. Nothing was replaced.';
+			}
+			await loadCloudSettings();
+		} catch (syncError) {
+			cloudError =
+				syncError instanceof Error
+					? syncError.message
+					: 'Could not sync with the other computer. The local vault was not replaced.';
+		} finally {
+			deviceSyncBusy = false;
+		}
+	}
+
+	async function handleSaveSchedule() {
+		scheduleBusy = true;
+		cloudError = '';
+		cloudMessage = '';
+		try {
+			cloudSettings = await setCloudSchedule(scheduleEnabled, Number(scheduleHours));
+			scheduleEnabled = cloudSettings.schedule_enabled === true;
+			cloudMessage = scheduleEnabled
+				? `Scheduled upload is on, every ${scheduleHours} hours. This uploads the same backup. It is not live sync between devices. A failed upload is logged and leaves the previous cloud copy in place.`
+				: 'Scheduled upload is off. Cloud backup still runs only when you click Back up to cloud now.';
+		} catch (scheduleError) {
+			cloudError = scheduleError instanceof Error ? scheduleError.message : 'Could not save the schedule';
+		} finally {
+			scheduleBusy = false;
 		}
 	}
 
@@ -478,6 +548,9 @@
 					<button type="button" class="secondary" disabled={cloudSyncBusy} on:click={handleSyncCloudBackup}>
 						{cloudSyncBusy ? 'Backing up...' : 'Back up to cloud now'}
 					</button>
+					<button type="button" class="secondary" disabled={deviceSyncBusy} on:click={handleDeviceSync}>
+						{deviceSyncBusy ? 'Syncing...' : 'Sync with another computer'}
+					</button>
 				{/if}
 			</div>
 		</form>
@@ -498,6 +571,31 @@
 		{/if}
 
 		{#if cloudSettings?.enabled}
+			<div class="launch-row">
+				<label class="checkbox-row">
+					<input type="checkbox" bind:checked={scheduleEnabled} />
+					<span>Upload on a schedule (off by default)</span>
+				</label>
+				<label>
+					<span>Interval</span>
+					<select bind:value={scheduleHours}>
+						<option value={6}>Every 6 hours</option>
+						<option value={12}>Every 12 hours</option>
+						<option value={24}>Every 24 hours</option>
+						<option value={168}>Every 7 days</option>
+					</select>
+				</label>
+				<p class="muted small">
+					Uses the same WebDAV upload as the button above, still one remote copy. A schedule is
+					not live multi-device sync. If an upload fails, Perpetua logs it and does not replace
+					the previous good backup. Sync with another computer compares timestamps and only
+					replaces this vault when the cloud copy is strictly newer (last write wins). A wrong
+					recovery key stops the sync and leaves this computer's vault as it is.
+				</p>
+				<button type="button" class="secondary" disabled={scheduleBusy} on:click={handleSaveSchedule}>
+					{scheduleBusy ? 'Saving…' : 'Save schedule'}
+				</button>
+			</div>
 			<p class="muted small" style="margin-top: 1rem;">
 				{#if cloudSettings.last_synced_at}
 					Last backed up {new Date(cloudSettings.last_synced_at).toLocaleString()}.
@@ -620,7 +718,14 @@
 		<div class="actions">
 			<button type="button" class="secondary" on:click={copyExtensionToken}>Copy token</button>
 			<button type="button" class="secondary" on:click={() => (extensionTokenRevealed = false)}>Hide</button>
+			<button type="button" class="danger" disabled={revokeBusy} on:click={revokeExtension}>
+				{revokeBusy ? 'Revoking…' : 'Revoke extension token'}
+			</button>
 		</div>
+		<p class="muted small">
+			Revoke signs this browser extension out. Any token copied earlier stops working immediately.
+			Perpetua stays signed in here with a new session.
+		</p>
 	{/if}
 </section>
 

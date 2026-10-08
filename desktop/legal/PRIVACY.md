@@ -30,19 +30,31 @@ application data directory (Windows: `%APPDATA%\perpetua`; exact path varies
 by OS).
 
 **At rest:** the SQLite vault is **not encrypted at rest** in the current
-release. Protect device access accordingly; use OS disk encryption where
-available. The exceptions are secrets that don't belong in a database file
-even an unencrypted one already accepts as a tradeoff: your SMTP relay
-password, your cloud-backup WebDAV password, and the cloud-backup
-encryption key all live in your operating system's credential store
-(Windows Credential Manager / macOS Keychain / Secret Service) instead.
+build. Opening the database file still shows a normal `SQLite format 3`
+header. SQLCipher was not enabled because this environment cannot compile
+it (Git for Windows Perl cannot load `Locale::Maketext::Simple`, and
+Strawberry Perl is not installed). Protect device access accordingly; use
+OS disk encryption where available.
+
+An encrypted vault, if a later build ships one, would cover the database
+file against offline theft and other OS users. It would **not** stop
+malware running as the same user, who can read both the file and the OS
+keychain.
+
+Secrets that are already kept out of the database file: your SMTP relay
+password, your cloud-backup WebDAV password, the cloud-backup encryption
+key, and any Auto-Maintain vendor username/password. Those live in your
+operating system's credential store (Windows Credential Manager / macOS
+Keychain / Secret Service). Vendor passwords are never returned by the
+local API and are not submitted to vendor sites.
 
 ## Data that may leave your device
 
 | Action | Data sent | Destination |
 |--------|-----------|-------------|
 | Polar Pro activation (optional) | The license key you paste, as required by Polar to validate it | Polar.sh APIs |
-| Password reset code / vault-sharing invite / cloud-backup recovery key / test email (optional) | A short code or key, by email | Your own SMTP relay, to your backup email address — never a Perpetua-operated server |
+| Password reset code / vault-sharing invite / cloud-backup recovery key / test email / due reminder (optional) | A short code, key, or reminder text, by email | Your own SMTP relay — never a Perpetua-operated server |
+| Activity inference (optional, off by default) | A hostname that matches one of your licenses, and then only a date stored locally | Your own Perpetua instance, at `127.0.0.1` — this never leaves your device |
 | Cloud backup (optional, Pro) | Your full vault, encrypted with AES-256-GCM **before it leaves your device** | A WebDAV server **you configure** (e.g. your own Koofr account), over HTTPS — never a Perpetua-operated server |
 | Browser extension sync (optional) | Licenses scraped from a deal site's own account page | Your own Perpetua instance, at `127.0.0.1` — this never leaves your device |
 | None of the above | — | — |

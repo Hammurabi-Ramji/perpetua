@@ -29,7 +29,12 @@ jobs:
       matrix:
         include:
           - platform: windows-latest
+          # Apple Silicon. macos-latest is arm64 (macOS 26 as of 2026).
           - platform: macos-latest
+          # Intel x86_64. macos-13 was removed in December 2025. macos-15-intel
+          # is the last GitHub-hosted Intel image and is scheduled through August 2027.
+          # https://github.com/actions/runner-images/issues/13045
+          - platform: macos-15-intel
           - platform: ubuntu-latest
 
     runs-on: ${{ matrix.platform }}
@@ -94,6 +99,10 @@ jobs:
         with:
           workspaces: desktop/src-tauri -> target
 
+      - name: Install trusted-signing-cli
+        if: matrix.platform == 'windows-latest'
+        run: cargo install trusted-signing-cli --locked
+
       - name: Install frontend dependencies
         run: npm ci
 
@@ -116,6 +125,16 @@ jobs:
           VITE_PERPETUA_PRO_PRICE: ${{ vars.VITE_PERPETUA_PRO_PRICE }}
           VITE_PERPETUA_PRODUCT_URL: ${{ vars.VITE_PERPETUA_PRODUCT_URL }}
           VITE_PERPETUA_SUPPORT_EMAIL: ${{ vars.VITE_PERPETUA_SUPPORT_EMAIL }}
+          # Require a signature only after the owner creates the Azure Artifact
+          # Signing account. An empty endpoint leaves Windows builds unsigned,
+          # which is what Sign-Windows.ps1 already does locally.
+          PERPETUA_REQUIRE_SIGNING: ${{ matrix.platform == 'windows-latest' && secrets.PERPETUA_AZURE_SIGNING_ENDPOINT != '' && '1' || '' }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          PERPETUA_AZURE_SIGNING_ENDPOINT: ${{ secrets.PERPETUA_AZURE_SIGNING_ENDPOINT }}
+          PERPETUA_AZURE_SIGNING_ACCOUNT: ${{ secrets.PERPETUA_AZURE_SIGNING_ACCOUNT }}
+          PERPETUA_AZURE_SIGNING_PROFILE: ${{ secrets.PERPETUA_AZURE_SIGNING_PROFILE }}
 
       # Belt and braces: ask the compiled binary what it thinks. Catches a
       # build-script regression that silently drops the org id.

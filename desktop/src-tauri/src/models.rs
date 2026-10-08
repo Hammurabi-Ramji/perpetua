@@ -11,6 +11,10 @@ pub struct User {
     pub browser_notifications: bool,
     pub onboarding_completed: bool,
     pub backup_email: Option<String>,
+    /// Incremented to invalidate previously issued JWTs (password change,
+    /// extension-token revoke). Included in the session token as `ver`.
+    #[serde(default)]
+    pub token_version: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -281,6 +285,16 @@ pub struct CloudBackupSettings {
     pub recovery_key_generated_at: Option<String>,
     pub last_synced_at: Option<String>,
     pub last_sync_error: Option<String>,
+    /// Opt-in upload on a timer. Off unless the user turns it on.
+    #[serde(default)]
+    pub schedule_enabled: bool,
+    /// Hours between scheduled uploads. 24 when unset.
+    #[serde(default = "default_schedule_interval_hours")]
+    pub schedule_interval_hours: i64,
+}
+
+fn default_schedule_interval_hours() -> i64 {
+    24
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -328,6 +342,15 @@ pub struct RestoreResult {
     pub restored: bool,
     /// File name of the automatic pre-restore snapshot (None on a fresh install).
     pub snapshot: Option<String>,
+}
+
+/// Result of comparing this computer with the shared cloud backup.
+/// `action` is `upload`, `download`, or `up_to_date`.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DeviceSyncResult {
+    pub action: String,
+    pub local_revision: String,
+    pub remote_revision: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

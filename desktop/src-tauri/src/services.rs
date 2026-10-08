@@ -24,6 +24,10 @@ pub struct Claims {
     pub sub: i64,
     pub email: String,
     pub exp: usize,
+    /// `users.token_version` at issue time. Absent on tokens minted before
+    /// revocation existed; those compare as 0, which matches an un-bumped user.
+    #[serde(default)]
+    pub ver: i64,
 }
 
 const REMINDER_WINDOW_DAYS: i64 = 30;
@@ -249,11 +253,12 @@ fn map_user(row: &rusqlite::Row<'_>) -> rusqlite::Result<User> {
         browser_notifications: bool_from_sql(row.get(6)?),
         onboarding_completed: bool_from_sql(row.get(7)?),
         backup_email: row.get(8)?,
+        token_version: row.get(9)?,
     })
 }
 
 const USER_COLUMNS: &str = "id, email, created_at, last_login, notification_email, \
-    email_notifications, browser_notifications, onboarding_completed, backup_email";
+    email_notifications, browser_notifications, onboarding_completed, backup_email, token_version";
 
 fn map_license(row: &rusqlite::Row<'_>) -> rusqlite::Result<License> {
     Ok(License {
@@ -289,6 +294,7 @@ pub fn create_jwt(secret: &str, user: &User) -> Result<String> {
         sub: user.id,
         email: user.email.clone(),
         exp: expiration,
+        ver: user.token_version,
     };
 
     Ok(encode(
@@ -306,6 +312,22 @@ pub fn verify_jwt(secret: &str, token: &str) -> Result<Claims> {
     )?;
 
     Ok(token_data.claims)
+}
+
+/// True when the token was issued at the user's current `token_version`.
+pub fn token_is_current(user: &User, claims: &Claims) -> bool {
+    claims.ver == user.token_version
+}
+
+/// Invalidates every JWT already issued for this user, including the
+/// browser-extension pairing token. Returns the user with the new version
+/// so the caller can mint a replacement session for the desktop app.
+pub fn bump_token_version(conn: &Connection, user_id: i64) -> Result<User> {
+    conn.execute(
+        "UPDATE users SET token_version = token_version + 1 WHERE id = ?",
+        params![user_id],
+    )?;
+    get_user_by_id(conn, user_id)?.ok_or_else(|| anyhow!("user not found"))
 }
 
 /// Canonical form for account emails: trimmed and lower-cased, so `A@x.com`
@@ -396,8 +418,9 @@ pub fn authenticate_user(conn: &Connection, email: &str, password: &str) -> Resu
                     browser_notifications: bool_from_sql(row.get(6)?),
                     onboarding_completed: bool_from_sql(row.get(7)?),
                     backup_email: row.get(8)?,
+                    token_version: row.get(9)?,
                 },
-                row.get::<_, String>(9)?,
+                row.get::<_, String>(10)?,
             ))
         })
         .optional()?;
@@ -873,8 +896,126 @@ pub fn get_reminder_items(conn: &Connection, user_id: i64) -> Result<Vec<Reminde
         }
     }
 
+    let mutes = load_reminder_mutes(conn, user_id)?;
+    let now_utc = Utc::now();
+    items.retain(|item| !reminder_is_suppressed(&mutes, item, now_utc));
     items.sort_by_key(|item| (item.days_remaining, item.kind.clone(), item.product_name.clone()));
     Ok(items)
+}
+
+struct ReminderMute {
+    license_id: i64,
+    kind: String,
+    due_date: String,
+    action: String,
+    snooze_until: Option<String>,
+}
+
+fn load_reminder_mutes(conn: &Connection, user_id: i64) -> Result<Vec<ReminderMute>> {
+    let mut stmt = conn.prepare(
+        "SELECT license_id, kind, due_date, action, snooze_until
+         FROM reminder_mutes WHERE user_id = ?",
+    )?;
+    let rows = stmt.query_map(params![user_id], |row| {
+        Ok(ReminderMute {
+            license_id: row.get(0)?,
+            kind: row.get(1)?,
+            due_date: row.get(2)?,
+            action: row.get(3)?,
+            snooze_until: row.get(4)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+fn reminder_is_suppressed(mutes: &[ReminderMute], item: &ReminderItem, now: chrono::DateTime<Utc>) -> bool {
+    let Some(mute) = mutes.iter().find(|mute| {
+        mute.license_id == item.license_id && mute.kind == item.kind && mute.due_date == item.due_date
+    }) else {
+        return false;
+    };
+    match mute.action.as_str() {
+        "dismiss" => true,
+        "snooze" => mute
+            .snooze_until
+            .as_deref()
+            .and_then(|stamp| chrono::DateTime::parse_from_rfc3339(stamp).ok())
+            .map(|until| now < until)
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+const SNOOZE_HOUR_CHOICES: &[i64] = &[1, 4, 24, 72, 168];
+
+fn reminder_kind_ok(kind: &str) -> bool {
+    matches!(kind, "expiry" | "action" | "keepalive")
+}
+
+fn assert_owned_license(conn: &Connection, user_id: i64, license_id: i64) -> Result<()> {
+    let owned: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM licenses WHERE id = ? AND user_id = ?",
+            params![license_id, user_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if owned.is_none() {
+        return Err(anyhow!("License not found."));
+    }
+    Ok(())
+}
+
+/// Hide this reminder occurrence until `hours` from now. A later due date
+/// (the next occurrence) is a different row and shows up normally.
+pub fn snooze_reminder(
+    conn: &Connection,
+    user_id: i64,
+    license_id: i64,
+    kind: &str,
+    due_date: &str,
+    hours: i64,
+) -> Result<()> {
+    if !SNOOZE_HOUR_CHOICES.contains(&hours) {
+        return Err(anyhow!("Snooze duration must be 1, 4, 24, 72, or 168 hours."));
+    }
+    if !reminder_kind_ok(kind) {
+        return Err(anyhow!("Unknown reminder type."));
+    }
+    normalize_date(Some(due_date.to_string()), "due_date")?;
+    assert_owned_license(conn, user_id, license_id)?;
+    let until = (Utc::now() + Duration::hours(hours)).to_rfc3339();
+    conn.execute(
+        "INSERT INTO reminder_mutes (user_id, license_id, kind, due_date, action, snooze_until)
+         VALUES (?, ?, ?, ?, 'snooze', ?)
+         ON CONFLICT(user_id, license_id, kind, due_date) DO UPDATE SET
+           action = 'snooze', snooze_until = excluded.snooze_until",
+        params![user_id, license_id, kind, due_date, until],
+    )?;
+    Ok(())
+}
+
+/// Do not nag again for this exact occurrence. Mark as used is unchanged.
+pub fn dismiss_reminder(
+    conn: &Connection,
+    user_id: i64,
+    license_id: i64,
+    kind: &str,
+    due_date: &str,
+) -> Result<()> {
+    if !reminder_kind_ok(kind) {
+        return Err(anyhow!("Unknown reminder type."));
+    }
+    normalize_date(Some(due_date.to_string()), "due_date")?;
+    assert_owned_license(conn, user_id, license_id)?;
+    conn.execute(
+        "INSERT INTO reminder_mutes (user_id, license_id, kind, due_date, action, snooze_until)
+         VALUES (?, ?, ?, ?, 'dismiss', NULL)
+         ON CONFLICT(user_id, license_id, kind, due_date) DO UPDATE SET
+           action = 'dismiss', snooze_until = NULL",
+        params![user_id, license_id, kind, due_date],
+    )?;
+    Ok(())
 }
 
 /// Items within this many days (including overdue) trigger a background
@@ -977,6 +1118,111 @@ pub fn pending_notifications(conn: &Connection) -> Result<Vec<ReminderNotice>> {
     Ok(notices)
 }
 
+/// One due reminder ready to send through the user's own SMTP relay.
+/// `settings` includes the relay password for the in-process sender only;
+/// it is never returned by the HTTP API.
+pub struct OutboundReminder {
+    pub to: String,
+    pub settings: AccountRecoverySettings,
+    pub notice: ReminderNotice,
+}
+
+fn email_already_sent_today(conn: &Connection, license_id: i64, kind: &str, today: &str) -> Result<bool> {
+    let mut stmt =
+        conn.prepare("SELECT notified_on FROM reminder_email_log WHERE license_id = ? AND kind = ?")?;
+    let value: Option<String> = stmt
+        .query_row(params![license_id, kind], |row| row.get(0))
+        .optional()?;
+    Ok(value.as_deref() == Some(today))
+}
+
+fn reminder_recipient(user: &User, settings: &AccountRecoverySettings) -> Option<String> {
+    normalize_optional(user.notification_email.clone())
+        .or_else(|| normalize_optional(settings.backup_email.clone()))
+        .or_else(|| normalize_optional(Some(user.email.clone())))
+}
+
+/// Due reminders for accounts that opted into email, but only when that
+/// account's SMTP relay is actually configured. A preference with no relay
+/// is logged and skipped — nothing is marked sent.
+pub fn pending_email_reminders(conn: &Connection) -> Result<Vec<OutboundReminder>> {
+    let today = today_local().to_string();
+    let mut stmt = conn.prepare("SELECT id FROM users WHERE email_notifications = 1")?;
+    let user_ids: Vec<i64> = stmt.query_map([], |row| row.get(0))?.collect::<Result<Vec<_>, _>>()?;
+    drop(stmt);
+
+    let mut outbound = Vec::new();
+    for user_id in user_ids {
+        let settings = get_account_recovery_settings(conn, user_id)?;
+        let smtp_ready = settings
+            .smtp_host
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|host| !host.is_empty());
+        if !smtp_ready {
+            crate::diag::log(&format!(
+                "email reminders are enabled for user {user_id} but SMTP is not configured; no email was sent"
+            ));
+            continue;
+        }
+        let Some(user) = get_user_by_id(conn, user_id)? else {
+            continue;
+        };
+        let Some(to) = reminder_recipient(&user, &settings) else {
+            crate::diag::log(&format!(
+                "email reminders are enabled for user {user_id} but there is no recipient address; no email was sent"
+            ));
+            continue;
+        };
+
+        let items = match get_reminder_items(conn, user_id) {
+            Ok(items) => items,
+            Err(error) => {
+                crate::diag::log(&format!("email reminder scan failed for user {user_id}: {error}"));
+                continue;
+            }
+        };
+        for item in items {
+            if item.days_remaining > NOTIFY_WINDOW_DAYS {
+                continue;
+            }
+            if email_already_sent_today(conn, item.license_id, &item.kind, &today)? {
+                continue;
+            }
+            let title = format!("Perpetua reminder: {}", item.product_name);
+            let body = format!(
+                "{}\n\nThis message was sent through the SMTP relay you configured in Perpetua. Perpetua does not operate a mail server.",
+                item.action_description
+                    .clone()
+                    .unwrap_or_else(|| format!("{} is {} ({}).", item.product_name, item.status, item.due_date))
+            );
+            outbound.push(OutboundReminder {
+                to: to.clone(),
+                settings: settings.clone(),
+                notice: ReminderNotice {
+                    license_id: item.license_id,
+                    kind: item.kind,
+                    title,
+                    body,
+                },
+            });
+        }
+    }
+    Ok(outbound)
+}
+
+/// Records that an email reminder was actually accepted by the user's SMTP
+/// relay. Callers must not call this when the relay is missing or the send failed.
+pub fn mark_email_reminder_sent(conn: &Connection, license_id: i64, kind: &str) -> Result<()> {
+    let today = today_local().to_string();
+    conn.execute(
+        "INSERT INTO reminder_email_log (license_id, kind, notified_on) VALUES (?, ?, ?)
+         ON CONFLICT(license_id, kind) DO UPDATE SET notified_on = excluded.notified_on",
+        params![license_id, kind, today],
+    )?;
+    Ok(())
+}
+
 /// Records that `notice` was shown today so it isn't repeated until tomorrow.
 pub fn mark_notice_delivered(conn: &Connection, notice: &ReminderNotice) -> Result<()> {
     mark_notified(conn, notice.license_id, &notice.kind, &today_local().to_string())
@@ -1016,6 +1262,21 @@ pub fn update_reminder_settings(
     user_id: i64,
     payload: ReminderSettingsUpdate,
 ) -> Result<Option<ReminderSettings>> {
+    if payload.email_notifications {
+        let recovery = get_account_recovery_settings(conn, user_id)?;
+        let smtp_ready = recovery
+            .smtp_host
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|host| !host.is_empty());
+        if !smtp_ready {
+            return Err(anyhow!(
+                "Email reminders need the SMTP relay under Backup email & account recovery. \
+                 Nothing was sent, and the toggle was not turned on."
+            ));
+        }
+    }
+
     conn.execute(
         "UPDATE users
          SET notification_email = ?, email_notifications = ?, browser_notifications = ?
@@ -1229,7 +1490,7 @@ pub fn confirm_password_reset(conn: &Connection, email: &str, code: &str, new_pa
 
     let new_hash = hash(new_password, DEFAULT_COST)?;
     conn.execute(
-        "UPDATE users SET password_hash = ? WHERE id = ?",
+        "UPDATE users SET password_hash = ?, token_version = token_version + 1 WHERE id = ?",
         params![new_hash, user.id],
     )?;
     conn.execute(
@@ -1705,12 +1966,14 @@ pub struct CloudSyncContext {
 }
 
 pub fn get_cloud_backup_settings(conn: &Connection, user_id: i64) -> Result<CloudBackupSettings> {
-    Ok(conn
+    let mut settings = conn
         .query_row(
-            "SELECT enabled, webdav_url, webdav_username, remote_path, recovery_key_generated_at, last_synced_at, last_sync_error
+            "SELECT enabled, webdav_url, webdav_username, remote_path, recovery_key_generated_at, last_synced_at, last_sync_error,
+                    schedule_enabled, schedule_interval_hours
              FROM cloud_backup_settings WHERE user_id = ?",
             params![user_id],
             |row| {
+                let hours: i64 = row.get(8)?;
                 Ok(CloudBackupSettings {
                     enabled: bool_from_sql(row.get(0)?),
                     webdav_url: row.get(1)?,
@@ -1719,11 +1982,17 @@ pub fn get_cloud_backup_settings(conn: &Connection, user_id: i64) -> Result<Clou
                     recovery_key_generated_at: row.get(4)?,
                     last_synced_at: row.get(5)?,
                     last_sync_error: row.get(6)?,
+                    schedule_enabled: bool_from_sql(row.get(7)?),
+                    schedule_interval_hours: if hours > 0 { hours } else { 24 },
                 })
             },
         )
         .optional()?
-        .unwrap_or_default())
+        .unwrap_or_default();
+    if settings.schedule_interval_hours <= 0 {
+        settings.schedule_interval_hours = 24;
+    }
+    Ok(settings)
 }
 
 /// Enables (or updates) cloud backup. The AES-256 recovery key is generated the
@@ -1807,7 +2076,15 @@ pub fn enable_cloud_backup(
 /// caller (the API route handler) must drop the lock before doing the actual
 /// network upload; see `record_cloud_sync_result` for recording the outcome
 /// afterward under a fresh, brief lock.
-pub fn prepare_cloud_sync(conn: &Connection, user_id: i64) -> Result<CloudSyncContext> {
+pub struct CloudAccess {
+    pub webdav_url: String,
+    pub webdav_username: String,
+    pub webdav_password: String,
+    pub remote_path: String,
+    pub recovery_key: String,
+}
+
+pub fn load_cloud_access(conn: &Connection, user_id: i64) -> Result<CloudAccess> {
     if !is_pro(conn)? {
         return Err(anyhow!("Cloud backup is a Pro feature."));
     }
@@ -1839,17 +2116,77 @@ pub fn prepare_cloud_sync(conn: &Connection, user_id: i64) -> Result<CloudSyncCo
     let recovery_key = crate::secret_store::read(crate::secret_store::BACKUP_KEY, user_id)
         .ok_or_else(|| anyhow!("Recovery key is missing — re-enable cloud backup to generate a new one."))?;
 
-    let directory = backup_dir()?;
-    let backup_entry = create_backup_in_dir(conn, &directory)?;
-    let backup_path = directory.join(&backup_entry.file_name);
-
-    Ok(CloudSyncContext {
+    Ok(CloudAccess {
         webdav_url,
         webdav_username,
         webdav_password,
         remote_path,
         recovery_key,
+    })
+}
+
+pub fn prepare_cloud_sync(conn: &Connection, user_id: i64) -> Result<CloudSyncContext> {
+    let access = load_cloud_access(conn, user_id)?;
+    let directory = backup_dir()?;
+    let backup_entry = create_backup_in_dir(conn, &directory)?;
+    let backup_path = directory.join(&backup_entry.file_name);
+
+    Ok(CloudSyncContext {
+        webdav_url: access.webdav_url,
+        webdav_username: access.webdav_username,
+        webdav_password: access.webdav_password,
+        remote_path: access.remote_path,
+        recovery_key: access.recovery_key,
         backup_path,
+    })
+}
+
+/// Newest license or account timestamp in this vault. Used as the
+/// last-write-wins clock for multi-device sync.
+pub fn vault_revision(conn: &Connection) -> Result<String> {
+    let from_licenses: Option<String> =
+        conn.query_row("SELECT MAX(updated_at) FROM licenses", [], |row| row.get(0))?;
+    let from_users: Option<String> =
+        conn.query_row("SELECT MAX(created_at) FROM users", [], |row| row.get(0))?;
+    Ok(match (from_licenses, from_users) {
+        (Some(licenses), Some(users)) if licenses >= users => licenses,
+        (Some(_), Some(users)) => users,
+        (Some(licenses), None) => licenses,
+        (None, Some(users)) => users,
+        (None, None) => String::new(),
+    })
+}
+
+pub fn revision_from_sqlite_bytes(bytes: &[u8]) -> Result<String> {
+    let path = std::env::temp_dir().join(format!("perpetua-rev-{}.db", uuid::Uuid::new_v4()));
+    fs::write(&path, bytes)?;
+    let revision = match Connection::open(&path) {
+        Ok(remote) => vault_revision(&remote),
+        Err(error) => Err(anyhow!("Remote backup is not a readable vault: {error}")),
+    };
+    let _ = fs::remove_file(&path);
+    let revision = revision?;
+    if revision.is_empty() {
+        return Err(anyhow!("Remote backup does not look like a Perpetua vault."));
+    }
+    Ok(revision)
+}
+
+/// Compares revisions only. Does not restore or upload.
+/// A wrong-key ciphertext is not a vault and returns an error, so the caller
+/// must not replace the local database.
+pub fn plan_device_sync(conn: &Connection, remote_plaintext: &[u8]) -> Result<crate::models::DeviceSyncResult> {
+    let local_revision = vault_revision(conn)?;
+    let remote_revision = revision_from_sqlite_bytes(remote_plaintext)?;
+    let action = match crate::cloud_backup::decide_sync(&local_revision, &remote_revision) {
+        crate::cloud_backup::SyncDecision::Upload => "upload",
+        crate::cloud_backup::SyncDecision::Download => "download",
+        crate::cloud_backup::SyncDecision::UpToDate => "up_to_date",
+    };
+    Ok(crate::models::DeviceSyncResult {
+        action: action.to_string(),
+        local_revision,
+        remote_revision,
     })
 }
 
@@ -1857,11 +2194,98 @@ pub fn prepare_cloud_sync(conn: &Connection, user_id: i64) -> Result<CloudSyncCo
 /// upload completes. Called under a fresh, brief lock, separate from
 /// `prepare_cloud_sync`.
 pub fn record_cloud_sync_result(conn: &Connection, user_id: i64, error: Option<&str>) -> Result<()> {
-    conn.execute(
-        "UPDATE cloud_backup_settings SET last_synced_at = ?, last_sync_error = ? WHERE user_id = ?",
-        params![now_string(), error, user_id],
-    )?;
+    if let Some(error) = error {
+        crate::diag::log(&format!("cloud backup failed for user {user_id}: {error}"));
+        conn.execute(
+            "UPDATE cloud_backup_settings SET last_sync_error = ? WHERE user_id = ?",
+            params![error, user_id],
+        )?;
+    } else {
+        conn.execute(
+            "UPDATE cloud_backup_settings SET last_synced_at = ?, last_sync_error = NULL WHERE user_id = ?",
+            params![now_string(), user_id],
+        )?;
+    }
     Ok(())
+}
+
+pub const CLOUD_SCHEDULE_HOURS: &[i64] = &[6, 12, 24, 168];
+
+/// Whether a scheduled upload should run. Off unless the user opted in.
+/// A missing or unparseable last-success time is due; a recent success is not.
+pub fn cloud_schedule_due(
+    enabled: bool,
+    interval_hours: i64,
+    last_synced_at: Option<&str>,
+    now: chrono::DateTime<Utc>,
+) -> bool {
+    if !enabled {
+        return false;
+    }
+    let hours = if CLOUD_SCHEDULE_HOURS.contains(&interval_hours) {
+        interval_hours
+    } else {
+        24
+    };
+    let Some(stamp) = last_synced_at.filter(|value| !value.is_empty()) else {
+        return true;
+    };
+    let Ok(synced) = chrono::DateTime::parse_from_rfc3339(stamp) else {
+        return true;
+    };
+    now.signed_duration_since(synced.with_timezone(&Utc)) >= Duration::hours(hours)
+}
+
+pub fn set_cloud_schedule(
+    conn: &Connection,
+    user_id: i64,
+    enabled: bool,
+    interval_hours: i64,
+) -> Result<CloudBackupSettings> {
+    if !is_pro(conn)? {
+        return Err(anyhow!("Cloud backup is a Pro feature."));
+    }
+    if enabled && !CLOUD_SCHEDULE_HOURS.contains(&interval_hours) {
+        return Err(anyhow!("Schedule interval must be 6, 12, 24, or 168 hours."));
+    }
+    let hours = if CLOUD_SCHEDULE_HOURS.contains(&interval_hours) {
+        interval_hours
+    } else {
+        24
+    };
+    let changed = conn.execute(
+        "UPDATE cloud_backup_settings
+         SET schedule_enabled = ?, schedule_interval_hours = ?
+         WHERE user_id = ? AND enabled = 1",
+        params![enabled as i64, hours, user_id],
+    )?;
+    if changed == 0 {
+        return Err(anyhow!("Turn on cloud backup before scheduling it."));
+    }
+    get_cloud_backup_settings(conn, user_id)
+}
+
+pub fn users_due_for_scheduled_sync(conn: &Connection, now: chrono::DateTime<Utc>) -> Result<Vec<i64>> {
+    let mut stmt = conn.prepare(
+        "SELECT user_id, schedule_interval_hours, last_synced_at
+         FROM cloud_backup_settings
+         WHERE enabled = 1 AND schedule_enabled = 1",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, Option<String>>(2)?,
+        ))
+    })?;
+    let mut due = Vec::new();
+    for row in rows {
+        let (user_id, hours, last_synced) = row?;
+        if cloud_schedule_due(true, hours, last_synced.as_deref(), now) {
+            due.push(user_id);
+        }
+    }
+    Ok(due)
 }
 
 /// Replaces the live vault database with `plaintext` (a decrypted backup

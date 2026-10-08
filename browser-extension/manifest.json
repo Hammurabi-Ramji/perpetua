@@ -5,7 +5,8 @@
   "description": "Sync lifetime-deal licenses from AppSumo, Product Hunt, StackSocial, and Humble Bundle into your local Perpetua vault",
   "permissions": [
     "storage",
-    "notifications"
+    "notifications",
+    "tabs"
   ],
   "host_permissions": [
     "http://127.0.0.1:18765/*",

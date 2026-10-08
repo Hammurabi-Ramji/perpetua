@@ -141,6 +141,11 @@ export function getCurrentUser() {
   return request<User>("/auth/me");
 }
 
+/** Invalidates the browser-extension pairing token and returns a fresh desktop session. */
+export function revokeExtensionToken() {
+  return request<AuthResponse>("/auth/revoke-extension", { method: "POST" });
+}
+
 export function completeOnboarding() {
   return request<{ onboarding_completed: boolean }>("/auth/onboarding/complete", {
     method: "POST",
@@ -281,8 +286,62 @@ export function updateReminderSettings(input: ReminderSettings) {
   });
 }
 
+export function getActivityInference() {
+  return request<{ enabled: boolean }>("/activity/settings");
+}
+
+export function setActivityInference(enabled: boolean) {
+  return request<{ enabled: boolean }>("/activity/settings", {
+    method: "PATCH",
+    body: JSON.stringify({ enabled }),
+  });
+}
+
 export function listReminderItems() {
   return request<ReminderItem[]>("/reminders/items");
+}
+
+export function listAutoMaintain() {
+  return request<import("$lib/types").AutoMaintainLicense[]>("/auto-maintain");
+}
+
+export function setAutoMaintain(
+  licenseId: number,
+  enabled: boolean,
+  username: string,
+  password: string,
+) {
+  return request<import("$lib/types").AutoMaintainLicense>(`/auto-maintain/${licenseId}`, {
+    method: "POST",
+    body: JSON.stringify({
+      enabled,
+      username,
+      password,
+    }),
+  });
+}
+
+export function snoozeReminder(item: ReminderItem, hours: number) {
+  return request<{ snoozed: boolean }>("/reminders/snooze", {
+    method: "POST",
+    body: JSON.stringify({
+      license_id: item.license_id,
+      kind: item.kind,
+      due_date: item.due_date,
+      hours,
+    }),
+  });
+}
+
+export function dismissReminder(item: ReminderItem) {
+  return request<{ dismissed: boolean }>("/reminders/dismiss", {
+    method: "POST",
+    body: JSON.stringify({
+      license_id: item.license_id,
+      kind: item.kind,
+      due_date: item.due_date,
+    }),
+  });
 }
 
 export function exportLicensesJson() {
@@ -321,6 +380,19 @@ export function enableCloudBackup(input: EnableCloudBackupInput) {
 
 export function syncCloudBackupNow() {
   return request<CloudBackupSettings>("/cloud-backup/sync", { method: "POST" });
+}
+
+export function syncDevices() {
+  return request<import("$lib/types").DeviceSyncResult>("/cloud-backup/sync-devices", {
+    method: "POST",
+  });
+}
+
+export function setCloudSchedule(enabled: boolean, intervalHours: number) {
+  return request<CloudBackupSettings>("/cloud-backup/schedule", {
+    method: "POST",
+    body: JSON.stringify({ enabled, interval_hours: intervalHours }),
+  });
 }
 
 /** Unauthenticated: tells the login page whether this install already holds a vault. */

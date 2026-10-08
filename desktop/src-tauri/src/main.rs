@@ -15,12 +15,15 @@ struct AppState {
     jwt_secret: Arc<String>,
 }
 
+mod activity;
 mod api;
+mod auto_maintain;
 mod cloud_backup;
 mod database;
 mod diag;
 mod mail;
 mod models;
+mod updater;
 mod polar;
 mod secret_store;
 mod services;
@@ -329,10 +332,16 @@ fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
         &[&nav_dashboard, &nav_licenses, &nav_sites, &nav_reminders, &nav_vault],
     )?;
 
+    let check_updates = MenuItem::with_id(app, "menu-check-updates", "Check for Updates…", true, None::<&str>)?;
     let user_guide = MenuItem::with_id(app, "menu-help-guide", "User Guide", true, None::<&str>)?;
     let troubleshooting = MenuItem::with_id(app, "menu-help-troubleshooting", "Troubleshooting", true, None::<&str>)?;
     let about = MenuItem::with_id(app, "menu-help-about", "About Perpetua", true, None::<&str>)?;
-    let help_menu = Submenu::with_items(app, "Help", true, &[&user_guide, &troubleshooting, &about])?;
+    let help_menu = Submenu::with_items(
+        app,
+        "Help",
+        true,
+        &[&check_updates, &user_guide, &troubleshooting, &about],
+    )?;
 
     let menu = Menu::with_items(app, &[&file_menu, &view_menu, &help_menu])?;
     app.set_menu(menu)?;
@@ -349,6 +358,13 @@ fn handle_menu_event(app: &tauri::AppHandle, id: &str) {
     use tauri_plugin_shell::ShellExt;
 
     match id {
+        "menu-check-updates" => {
+            let message = updater::check_for_updates_message(updater::configured_pubkey_from_manifest());
+            app.dialog()
+                .message(message)
+                .title("Perpetua — updates")
+                .show(|_| {});
+        }
         "menu-help-guide" => {
             let _ = app.shell().open(USER_GUIDE_URL, None);
         }
@@ -414,6 +430,82 @@ fn spawn_reminder_scheduler(handle: tauri::AppHandle) {
                         }
                     }
                     Err(error) => diag::log(&format!("notification not shown ({}): {error}", notice.kind)),
+                }
+            }
+
+            // Email reminders use the same SMTP relay as password reset. If the
+            // relay is not configured, pending_email_reminders logs that and
+            // returns nothing — it does not mark mail as sent.
+            let outbound = {
+                let conn = state.db.lock().await;
+                match services::pending_email_reminders(&conn) {
+                    Ok(items) => items,
+                    Err(error) => {
+                        diag::log(&format!("email reminder check failed: {error:#}"));
+                        Vec::new()
+                    }
+                }
+            };
+            for item in outbound {
+                match mail::send_email(&item.settings, &item.to, &item.notice.title, &item.notice.body).await {
+                    Ok(()) => {
+                        let conn = state.db.lock().await;
+                        if let Err(error) = services::mark_email_reminder_sent(&conn, item.notice.license_id, &item.notice.kind)
+                        {
+                            diag::log(&format!("could not record email reminder delivery: {error:#}"));
+                        }
+                    }
+                    Err(error) => {
+                        diag::log(&format!("email reminder not sent ({}): {error:#}", item.notice.kind));
+                    }
+                }
+            }
+
+            // Scheduled cloud backup is an opt-in upload of the same single
+            // WebDAV object. It is not live multi-device sync. A failed upload
+            // is logged and leaves last_synced_at (and the previous remote
+            // object) alone.
+            {
+                let conn = state.db.lock().await;
+                if let Err(error) = auto_maintain::run_auto_maintain_pass(&conn) {
+                    diag::log(&format!("auto-maintain pass failed: {error:#}"));
+                }
+            }
+
+            let due_users = {
+                let conn = state.db.lock().await;
+                match services::users_due_for_scheduled_sync(&conn, chrono::Utc::now()) {
+                    Ok(users) => users,
+                    Err(error) => {
+                        diag::log(&format!("scheduled cloud backup check failed: {error:#}"));
+                        Vec::new()
+                    }
+                }
+            };
+            for user_id in due_users {
+                let prepared = {
+                    let conn = state.db.lock().await;
+                    services::prepare_cloud_sync(&conn, user_id)
+                };
+                let upload_result = match prepared {
+                    Ok(context) => match std::fs::read(&context.backup_path) {
+                        Ok(bytes) => {
+                            let target = cloud_backup::WebDavTarget {
+                                base_url: &context.webdav_url,
+                                username: &context.webdav_username,
+                                password: &context.webdav_password,
+                                remote_path: &context.remote_path,
+                            };
+                            cloud_backup::upload(&target, &context.recovery_key, &bytes).await
+                        }
+                        Err(error) => Err(anyhow::anyhow!("failed to read local backup: {error}")),
+                    },
+                    Err(error) => Err(error),
+                };
+                let conn = state.db.lock().await;
+                let message = upload_result.as_ref().err().map(|error| error.to_string());
+                if let Err(error) = services::record_cloud_sync_result(&conn, user_id, message.as_deref()) {
+                    diag::log(&format!("could not record scheduled cloud backup: {error:#}"));
                 }
             }
 

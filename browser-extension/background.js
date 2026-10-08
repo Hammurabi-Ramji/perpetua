@@ -1,7 +1,7 @@
 // background.js — the only place network calls to Perpetua happen. Content
 // scripts extract data and message this worker; they never fetch directly.
 
-importScripts('lib/api.js');
+importScripts('lib/api.js', 'lib/activity.js');
 
 const SITE_HOSTS = {
   appsumo: 'appsumo.com',
@@ -109,6 +109,32 @@ async function triggerManualSyncAllTabs() {
     return { ok: false, error: error.message };
   }
 }
+
+async function handlePossibleVisit(url) {
+  const { activityInference } = await chrome.storage.local.get('activityInference');
+  if (activityInference !== true) return;
+  let hosts = [];
+  try {
+    const data = await getActivityHosts();
+    hosts = (data && data.hosts) || [];
+  } catch {
+    return;
+  }
+  const host = visitShouldReset(true, url, hosts);
+  if (!host) return;
+  try {
+    await reportHostVisit(host);
+  } catch (error) {
+    if (error && error.status === 401) {
+      maybeNotify('Keep-alive visit check needs a fresh Perpetua token.', 'error');
+    }
+  }
+}
+
+chrome.tabs.onUpdated.addListener((_tabId, changeInfo, tab) => {
+  if (!changeInfo || changeInfo.status !== 'complete' || !tab || !tab.url) return;
+  handlePossibleVisit(tab.url);
+});
 
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   switch (request.action) {

@@ -31,6 +31,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": false,
     "targets": "all",
     "publisher": "Hammurabi Coding Company, LLC",
     "copyright": "Copyright © 2026 Hammurabi Coding Company, LLC",
@@ -55,5 +56,12 @@
       }
     }
   },
-  "plugins": {}
+  "plugins": {
+    "updater": {
+      "pubkey": "UNCONFIGURED",
+      "endpoints": [
+        "https://github.com/Hammurabi-Ramji/PERPETUA/releases/latest/download/latest.json"
+      ]
+    }
+  }
 }

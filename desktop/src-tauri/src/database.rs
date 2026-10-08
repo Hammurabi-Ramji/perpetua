@@ -144,6 +144,37 @@ pub fn apply_schema(conn: &Connection) -> Result<()> {
             PRIMARY KEY (license_id, kind)
         );
 
+        CREATE TABLE IF NOT EXISTS reminder_email_log (
+            license_id INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            notified_on TEXT NOT NULL,
+            PRIMARY KEY (license_id, kind)
+        );
+
+        CREATE TABLE IF NOT EXISTS auto_maintain_opt_in (
+            license_id INTEGER PRIMARY KEY,
+            user_id INTEGER NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS auto_maintain_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            license_id INTEGER NOT NULL,
+            attempted_at TEXT NOT NULL,
+            outcome TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS reminder_mutes (
+            user_id INTEGER NOT NULL,
+            license_id INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            due_date TEXT NOT NULL,
+            action TEXT NOT NULL,
+            snooze_until TEXT,
+            PRIMARY KEY (user_id, license_id, kind, due_date)
+        );
+
         CREATE TABLE IF NOT EXISTS connected_sites (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
@@ -216,11 +247,31 @@ pub fn apply_schema(conn: &Connection) -> Result<()> {
         [],
     );
     let _ = conn.execute("ALTER TABLE users ADD COLUMN backup_email TEXT", []);
+    // Bumped on password change and when the browser-extension token is
+    // revoked. JWTs carry the version they were issued at; a mismatch is rejected.
+    let _ = conn.execute(
+        "ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+    // Opt-in keep-alive reset when the browser extension sees a matching hostname.
+    // Off by default: Mark as used stays the way a clock is reset.
+    let _ = conn.execute(
+        "ALTER TABLE users ADD COLUMN activity_inference INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
     // Pending invites now expire (see prepare_invite). redeem_invite requires
     // expires_at to be set and in the future, so any pre-migration invite rows
     // (NULL expires_at) simply can no longer be redeemed — fail closed rather
     // than treating them as never-expiring.
     let _ = conn.execute("ALTER TABLE vault_members ADD COLUMN expires_at TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE cloud_backup_settings ADD COLUMN schedule_enabled INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE cloud_backup_settings ADD COLUMN schedule_interval_hours INTEGER NOT NULL DEFAULT 24",
+        [],
+    );
 
     // One-time: desktop reminders are now actually gated on the
     // `browser_notifications` preference (they used to fire regardless of it).

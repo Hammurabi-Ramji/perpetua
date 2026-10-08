@@ -12,13 +12,16 @@ use crate::api::build_router;
 use crate::database::{backup_dir_at, db_path_at, init_db_at};
 use crate::models::{AccountRecoverySettings, EnableCloudBackupRequest, LicensePayload};
 use crate::services::{
-    activate_pro, add_license, authenticate_user, collect_due_notifications, confirm_password_reset,
-    create_backup_in_dir, create_jwt, create_user, delete_license, enable_cloud_backup,
+    activate_pro, add_license, authenticate_user, bump_token_version, collect_due_notifications,
+    confirm_password_reset, create_backup_in_dir, create_jwt, create_user, delete_license, dismiss_reminder,
+    enable_cloud_backup, get_user_by_id,
     export_licenses_csv, export_licenses_json, get_entitlement, get_license_by_id, get_license_stats,
     get_licenses, get_reminder_items, import_licenses_csv, import_licenses_json, list_backups_in_dir,
-    mark_license_active, mint_pro_key, prepare_invite, prepare_password_reset, redeem_invite,
-    resolve_data_owner_id, restore_vault_from_bytes_at, update_account_recovery_settings, update_license,
-    verify_pro_key, FREE_LICENSE_LIMIT,
+    mark_email_reminder_sent, mark_license_active, mint_pro_key, pending_email_reminders,
+    prepare_invite, prepare_password_reset, redeem_invite,
+    resolve_data_owner_id, restore_vault_from_bytes_at, snooze_reminder, token_is_current,
+    update_account_recovery_settings,
+    update_license, update_reminder_settings, verify_jwt, verify_pro_key, FREE_LICENSE_LIMIT,
 };
 
 fn sample_license(product_name: &str, expiry_date: Option<&str>) -> LicensePayload {
@@ -755,6 +758,7 @@ fn password_reset_round_trip_requires_backup_email_and_smtp() {
     let temp = tempdir().expect("temp dir");
     let conn = init_db_at(temp.path()).expect("db");
     let user = create_user(&conn, "locked-out@example.com", "originalpass1").expect("user");
+    let issued = create_jwt("reset-secret", &user).expect("jwt before reset");
 
     // No backup email / SMTP configured yet — nothing to send, no code issued.
     assert!(prepare_password_reset(&conn, "locked-out@example.com")
@@ -792,9 +796,510 @@ fn password_reset_round_trip_requires_backup_email_and_smtp() {
     assert!(authenticate_user(&conn, "locked-out@example.com", "newpassword1")
         .expect("auth check")
         .is_some());
+    let after_reset = get_user_by_id(&conn, user.id).expect("user").expect("still exists");
+    assert!(after_reset.token_version > user.token_version);
+    let stale = verify_jwt("reset-secret", &issued).expect("stale jwt still parses");
+    assert!(!token_is_current(&after_reset, &stale));
 
     // The same code can't be replayed.
     assert!(confirm_password_reset(&conn, "locked-out@example.com", &code, "anotherpass1").is_err());
+}
+
+#[test]
+fn vault_file_is_still_plaintext_sqlite() {
+    // SQLCipher was not switched on. Git for Windows Perl cannot load
+    // Locale::Maketext::Simple, and Strawberry Perl is not installed, so
+    // rusqlite's vendored OpenSSL build cannot configure. Do not describe
+    // this file as encrypted.
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    drop(conn);
+    let bytes = std::fs::read(db_path_at(temp.path()).expect("path")).expect("bytes");
+    assert!(bytes.starts_with(b"SQLite format 3\0"));
+}
+
+#[test]
+fn auto_maintain_stores_credentials_only_in_the_keychain_and_downgrades() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let user = create_user(&conn, "maintain@example.com", "password123").expect("user");
+    let stale = (chrono::Utc::now().date_naive() - chrono::Duration::days(40))
+        .format("%Y-%m-%d")
+        .to_string();
+    let license = add_license(
+        &conn,
+        user.id,
+        LicensePayload {
+            keepalive_days: Some(30),
+            last_active: Some(stale.clone()),
+            ..sample_license("Vendor Tool", None)
+        },
+    )
+    .expect("license");
+
+    let denied = crate::auto_maintain::set_auto_maintain(
+        &conn,
+        user.id,
+        license.id,
+        true,
+        Some("vendor-user"),
+        Some("Vendor-Secret-99"),
+    );
+    assert!(denied.is_err());
+    assert!(denied.unwrap_err().to_string().contains("Pro"));
+
+    activate_pro(&conn, user.id, &mint_pro_key("maintain").expect("key")).expect("pro");
+    let saved = crate::auto_maintain::set_auto_maintain(
+        &conn,
+        user.id,
+        license.id,
+        true,
+        Some("vendor-user"),
+        Some("Vendor-Secret-99"),
+    )
+    .expect("opt in");
+    assert!(saved.enabled);
+    assert!(saved.credential_set);
+    let listed = serde_json::to_string(&crate::auto_maintain::list_auto_maintain(&conn, user.id).expect("list")).unwrap();
+    assert!(!listed.contains("Vendor-Secret-99"));
+    assert!(!listed.contains("vendor-user"));
+
+    let before = get_license_by_id(&conn, user.id, license.id).expect("fetch").expect("row");
+    assert_eq!(crate::auto_maintain::run_auto_maintain_pass(&conn).expect("run"), 1);
+    let after = get_license_by_id(&conn, user.id, license.id).expect("fetch").expect("row");
+    assert_eq!(after.last_active, before.last_active);
+    let outcome: String = conn
+        .query_row(
+            "SELECT outcome FROM auto_maintain_audit WHERE license_id = ?1",
+            rusqlite::params![license.id],
+            |row| row.get(0),
+        )
+        .expect("audit");
+    assert_eq!(outcome, "downgraded_to_reminder");
+    assert!(get_reminder_items(&conn, user.id)
+        .expect("reminders")
+        .iter()
+        .any(|item| item.license_id == license.id && item.kind == "keepalive"));
+
+    drop(conn);
+    let raw = std::fs::read(db_path_at(temp.path()).expect("path")).expect("db bytes");
+    let text = String::from_utf8_lossy(&raw);
+    assert!(!text.contains("Vendor-Secret-99"));
+    assert!(!text.contains("vendor-user"));
+}
+
+#[test]
+fn device_sync_plan_refuses_a_newer_local_vault_and_a_bad_payload() {
+    let local_dir = tempdir().expect("local");
+    let local = init_db_at(local_dir.path()).expect("local db");
+    let user = create_user(&local, "sync@example.com", "password123").expect("user");
+    let license = add_license(&local, user.id, sample_license("Local Tool", None)).expect("license");
+    local
+        .execute(
+            "UPDATE users SET created_at = '2020-01-01T00:00:00+00:00' WHERE id = ?1",
+            rusqlite::params![user.id],
+        )
+        .expect("stamp user");
+    local
+        .execute(
+            "UPDATE licenses SET updated_at = '2026-03-01T00:00:00+00:00' WHERE id = ?1",
+            rusqlite::params![license.id],
+        )
+        .expect("stamp license");
+
+    let remote_dir = tempdir().expect("remote");
+    let remote = init_db_at(remote_dir.path()).expect("remote db");
+    let remote_user = create_user(&remote, "sync@example.com", "password123").expect("remote user");
+    let remote_license = add_license(&remote, remote_user.id, sample_license("Remote Tool", None)).expect("remote license");
+    remote
+        .execute(
+            "UPDATE users SET created_at = '2020-01-01T00:00:00+00:00' WHERE id = ?1",
+            rusqlite::params![remote_user.id],
+        )
+        .expect("stamp remote user");
+    remote
+        .execute(
+            "UPDATE licenses SET updated_at = '2026-01-01T00:00:00+00:00' WHERE id = ?1",
+            rusqlite::params![remote_license.id],
+        )
+        .expect("stamp remote license");
+    drop(remote);
+    let older_remote = std::fs::read(db_path_at(remote_dir.path()).expect("path")).expect("bytes");
+
+    let plan = crate::services::plan_device_sync(&local, &older_remote).expect("plan");
+    assert_eq!(plan.action, "upload");
+    assert_eq!(
+        get_license_by_id(&local, user.id, license.id).expect("fetch").expect("row").product_name,
+        "Local Tool"
+    );
+
+    let same = std::fs::read(db_path_at(local_dir.path()).expect("local path")).expect("local bytes");
+    // The on-disk file may lag the open connection; compare via a second database
+    // whose license timestamp matches the local one.
+    let _ = same;
+    let twin_dir = tempdir().expect("twin");
+    let twin = init_db_at(twin_dir.path()).expect("twin db");
+    let twin_user = create_user(&twin, "sync@example.com", "password123").expect("twin user");
+    let twin_license = add_license(&twin, twin_user.id, sample_license("Twin Tool", None)).expect("twin license");
+    twin
+        .execute(
+            "UPDATE users SET created_at = '2020-01-01T00:00:00+00:00'",
+            [],
+        )
+        .expect("stamp");
+    twin
+        .execute(
+            "UPDATE licenses SET updated_at = '2026-03-01T00:00:00+00:00'",
+            [],
+        )
+        .expect("stamp");
+    drop(twin);
+    let equal_bytes = std::fs::read(db_path_at(twin_dir.path()).expect("twin path")).expect("twin bytes");
+    let equal = crate::services::plan_device_sync(&local, &equal_bytes).expect("equal");
+    assert_eq!(equal.action, "up_to_date");
+
+    let newer_dir = tempdir().expect("newer");
+    let newer = init_db_at(newer_dir.path()).expect("newer db");
+    let newer_user = create_user(&newer, "sync@example.com", "password123").expect("newer user");
+    add_license(&newer, newer_user.id, sample_license("Newer Tool", None)).expect("newer license");
+    newer
+        .execute("UPDATE users SET created_at = '2020-01-01T00:00:00+00:00'", [])
+        .expect("stamp");
+    newer
+        .execute("UPDATE licenses SET updated_at = '2026-08-01T00:00:00+00:00'", [])
+        .expect("stamp");
+    drop(newer);
+    let newer_bytes = std::fs::read(db_path_at(newer_dir.path()).expect("newer path")).expect("newer bytes");
+    let download = crate::services::plan_device_sync(&local, &newer_bytes).expect("download");
+    assert_eq!(download.action, "download");
+    assert_eq!(
+        get_license_by_id(&local, user.id, license.id).expect("fetch").expect("row").product_name,
+        "Local Tool",
+        "planning a download must not replace the local vault"
+    );
+
+    let key_a = crate::cloud_backup::generate_recovery_key();
+    let key_b = crate::cloud_backup::generate_recovery_key();
+    let blob = crate::cloud_backup::encrypt(&key_a, b"secret vault bytes").expect("encrypt");
+    assert!(crate::cloud_backup::decrypt(&key_b, &blob).is_err());
+    assert!(crate::services::plan_device_sync(&local, &blob).is_err());
+    assert_eq!(
+        get_license_by_id(&local, user.id, license.id).expect("fetch").expect("row").product_name,
+        "Local Tool"
+    );
+    let _ = twin_license;
+}
+
+#[test]
+fn cloud_schedule_defaults_off_and_a_failure_keeps_the_last_success() {
+    use crate::services::{cloud_schedule_due, get_cloud_backup_settings, record_cloud_sync_result, users_due_for_scheduled_sync};
+    let now = chrono::Utc::now();
+    assert!(!cloud_schedule_due(false, 24, None, now));
+    assert!(cloud_schedule_due(true, 24, None, now));
+    let recent = now.to_rfc3339();
+    assert!(!cloud_schedule_due(true, 24, Some(&recent), now));
+    let old = (now - chrono::Duration::hours(25)).to_rfc3339();
+    assert!(cloud_schedule_due(true, 24, Some(&old), now));
+
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let user = create_user(&conn, "sched@example.com", "password123").expect("user");
+    conn.execute(
+        "INSERT INTO cloud_backup_settings (user_id, enabled, webdav_url, remote_path, last_synced_at)
+         VALUES (?1, 1, 'https://dav.example', '/perpetua-backups', ?2)",
+        rusqlite::params![user.id, old],
+    )
+    .expect("settings");
+    assert!(users_due_for_scheduled_sync(&conn, now).expect("due").is_empty());
+    conn.execute(
+        "UPDATE cloud_backup_settings SET schedule_enabled = 1, schedule_interval_hours = 24 WHERE user_id = ?1",
+        rusqlite::params![user.id],
+    )
+    .expect("opt in");
+    assert_eq!(users_due_for_scheduled_sync(&conn, now).expect("due"), vec![user.id]);
+    record_cloud_sync_result(&conn, user.id, Some("network down")).expect("record");
+    let settings = get_cloud_backup_settings(&conn, user.id).expect("settings");
+    assert_eq!(settings.last_synced_at.as_deref(), Some(old.as_str()));
+    assert_eq!(settings.last_sync_error.as_deref(), Some("network down"));
+    assert!(settings.schedule_enabled);
+    assert!(!settings.last_synced_at.as_deref().unwrap().is_empty());
+}
+
+#[test]
+fn activity_visit_resets_keepalive_only_when_opted_in_and_stores_no_host() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let user = create_user(&conn, "visit@example.com", "password123").expect("user");
+    let stale = (chrono::Utc::now().date_naive() - chrono::Duration::days(20))
+        .format("%Y-%m-%d")
+        .to_string();
+    let license = add_license(
+        &conn,
+        user.id,
+        LicensePayload {
+            product_url: Some("https://vendor.test/login".to_string()),
+            redemption_url: None,
+            download_url: None,
+            keepalive_days: Some(30),
+            last_active: Some(stale.clone()),
+            ..sample_license("Vendor Tool", None)
+        },
+    )
+    .expect("license");
+
+    let refused = crate::activity::record_host_visit(&conn, user.id, user.id, "vendor.test");
+    assert!(refused.is_err());
+    let unchanged = get_license_by_id(&conn, user.id, license.id).expect("fetch").expect("row");
+    assert_eq!(unchanged.last_active.as_deref(), Some(stale.as_str()));
+
+    assert!(crate::activity::set_activity_inference(&conn, user.id, true).expect("opt in"));
+    let hosts = crate::activity::tracked_hosts(&conn, user.id, user.id).expect("hosts");
+    assert_eq!(hosts, vec!["vendor.test".to_string()]);
+
+    let missed = crate::activity::record_host_visit(&conn, user.id, user.id, "other.test").expect("miss");
+    assert!(missed.is_empty());
+    assert_eq!(
+        get_license_by_id(&conn, user.id, license.id)
+            .expect("fetch")
+            .expect("row")
+            .last_active
+            .as_deref(),
+        Some(stale.as_str())
+    );
+
+    let updated = crate::activity::record_host_visit(&conn, user.id, user.id, "https://app.vendor.test/secret-path")
+        .expect("visit");
+    assert_eq!(updated, vec![license.id]);
+    let today = crate::services::today_local().format("%Y-%m-%d").to_string();
+    assert_eq!(
+        get_license_by_id(&conn, user.id, license.id)
+            .expect("fetch")
+            .expect("row")
+            .last_active
+            .as_deref(),
+        Some(today.as_str())
+    );
+
+    drop(conn);
+    let bytes = std::fs::read(db_path_at(temp.path()).expect("db path")).expect("read db");
+    let raw = String::from_utf8_lossy(&bytes);
+    assert!(!raw.contains("app.vendor.test"), "visit hostname must not be stored");
+    assert!(!raw.contains("secret-path"), "visit path must not be stored");
+
+    let conn = init_db_at(temp.path()).expect("reopen");
+    let marked = mark_license_active(&conn, user.id, license.id).expect("manual").expect("row");
+    assert_eq!(marked.last_active.as_deref(), Some(today.as_str()));
+}
+
+#[test]
+fn snooze_and_dismiss_hide_one_occurrence_and_mark_used_still_resets() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let user = create_user(&conn, "snooze@example.com", "password123").expect("user");
+    let today = chrono::Utc::now().date_naive();
+    let due = today.format("%Y-%m-%d").to_string();
+    let stale = (today - chrono::Duration::days(40)).format("%Y-%m-%d").to_string();
+
+    let action = add_license(
+        &conn,
+        user.id,
+        LicensePayload {
+            action_required: Some(true),
+            action_description: Some("Redeem now".to_string()),
+            action_deadline: Some(due.clone()),
+            ..sample_license("Redeem Today", None)
+        },
+    )
+    .expect("action license");
+    let keepalive = add_license(
+        &conn,
+        user.id,
+        LicensePayload {
+            keepalive_days: Some(30),
+            last_active: Some(stale),
+            ..sample_license("Idle Tool", None)
+        },
+    )
+    .expect("keepalive license");
+
+    let before = get_reminder_items(&conn, user.id).expect("items");
+    let action_item = before.iter().find(|item| item.license_id == action.id).expect("action due");
+    snooze_reminder(&conn, user.id, action.id, &action_item.kind, &action_item.due_date, 24).expect("snooze");
+    assert!(get_reminder_items(&conn, user.id)
+        .expect("after snooze")
+        .iter()
+        .all(|item| item.license_id != action.id));
+
+    let past = (chrono::Utc::now() - chrono::Duration::hours(2)).to_rfc3339();
+    conn.execute(
+        "UPDATE reminder_mutes SET snooze_until = ?1 WHERE license_id = ?2",
+        rusqlite::params![past, action.id],
+    )
+    .expect("expire snooze");
+    assert!(get_reminder_items(&conn, user.id)
+        .expect("snooze elapsed")
+        .iter()
+        .any(|item| item.license_id == action.id));
+
+    dismiss_reminder(&conn, user.id, action.id, "action", &due).expect("dismiss");
+    assert!(get_reminder_items(&conn, user.id)
+        .expect("dismissed")
+        .iter()
+        .all(|item| item.license_id != action.id));
+
+    let later = (today + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
+    update_license(
+        &conn,
+        user.id,
+        action.id,
+        crate::models::LicenseUpdate {
+            action_deadline: Some(later),
+            ..Default::default()
+        },
+    )
+    .expect("move deadline")
+    .expect("license");
+    assert!(
+        get_reminder_items(&conn, user.id)
+            .expect("new occurrence")
+            .iter()
+            .any(|item| item.license_id == action.id),
+        "a new due date is a new occurrence"
+    );
+
+    let marked = mark_license_active(&conn, user.id, keepalive.id)
+        .expect("mark used")
+        .expect("license");
+    assert_eq!(marked.last_active.as_deref(), Some(due.as_str()));
+    assert!(snooze_reminder(&conn, user.id, action.id, "action", &due, 3).is_err());
+}
+
+#[test]
+fn email_reminders_require_smtp_and_do_not_mark_unsent_mail() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let user = create_user(&conn, "mail@example.com", "password123").expect("user");
+    let today = chrono::Utc::now().date_naive().format("%Y-%m-%d").to_string();
+    add_license(
+        &conn,
+        user.id,
+        LicensePayload {
+            action_required: Some(true),
+            action_description: Some("Redeem now".to_string()),
+            action_deadline: Some(today),
+            ..sample_license("Redeem Today", None)
+        },
+    )
+    .expect("due license");
+
+    let turned_on = update_reminder_settings(
+        &conn,
+        user.id,
+        crate::models::ReminderSettingsUpdate {
+            notification_email: None,
+            email_notifications: true,
+            browser_notifications: true,
+        },
+    );
+    assert!(turned_on.is_err(), "toggle must not turn on without SMTP");
+    let stored = crate::services::get_reminder_settings(&conn, user.id)
+        .expect("settings")
+        .expect("row");
+    assert!(!stored.email_notifications);
+
+    // A preference forced on without a relay must not look like mail went out.
+    conn.execute("UPDATE users SET email_notifications = 1 WHERE id = ?1", [user.id])
+        .expect("force preference");
+    let skipped = pending_email_reminders(&conn).expect("pending without smtp");
+    assert!(skipped.is_empty());
+    let logged: i64 = conn
+        .query_row("SELECT COUNT(*) FROM reminder_email_log", [], |row| row.get(0))
+        .expect("log count");
+    assert_eq!(logged, 0);
+
+    let mut recovery = sample_recovery_settings();
+    recovery.backup_email = Some("backup@example.com".to_string());
+    update_account_recovery_settings(&conn, user.id, recovery).expect("smtp");
+    update_reminder_settings(
+        &conn,
+        user.id,
+        crate::models::ReminderSettingsUpdate {
+            notification_email: Some("alerts@example.com".to_string()),
+            email_notifications: true,
+            browser_notifications: true,
+        },
+    )
+    .expect("enable with smtp");
+
+    let pending = pending_email_reminders(&conn).expect("pending");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].to, "alerts@example.com");
+    assert!(pending[0].settings.smtp_host.is_some());
+    mark_email_reminder_sent(&conn, pending[0].notice.license_id, &pending[0].notice.kind).expect("mark");
+    assert!(pending_email_reminders(&conn).expect("second").is_empty());
+}
+
+#[tokio::test]
+async fn revoke_extension_token_rejects_the_old_jwt_and_issues_a_new_one() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let user = create_user(&conn, "ext@example.com", "password123").expect("user");
+    let stale = create_jwt("test-secret", &user).expect("extension token");
+    let router = build_router(Arc::new(Mutex::new(conn)), Arc::new("test-secret".to_string()));
+
+    let revoked = router
+        .clone()
+        .oneshot(http("POST", "/api/auth/revoke-extension", Some(&stale), None))
+        .await
+        .expect("revoke");
+    assert_eq!(revoked.status(), StatusCode::OK);
+    let body = read_json(revoked).await;
+    let fresh = body["data"]["token"].as_str().expect("replacement token").to_string();
+    assert_ne!(fresh, stale);
+
+    let old_me = router
+        .clone()
+        .oneshot(http("GET", "/api/auth/me", Some(&stale), None))
+        .await
+        .expect("old me");
+    assert_eq!(old_me.status(), StatusCode::UNAUTHORIZED);
+
+    let new_me = router
+        .clone()
+        .oneshot(http("GET", "/api/auth/me", Some(&fresh), None))
+        .await
+        .expect("new me");
+    assert_eq!(new_me.status(), StatusCode::OK);
+
+    // A token minted before revocation existed (no `ver` claim) matches version 0
+    // and is rejected once the version has been bumped.
+    let legacy = jsonwebtoken::encode(
+        &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
+        &serde_json::json!({ "sub": user.id, "email": user.email, "exp": chrono::Utc::now().timestamp() + 3600 }),
+        &jsonwebtoken::EncodingKey::from_secret(b"test-secret"),
+    )
+    .expect("legacy jwt");
+    let legacy_me = router
+        .oneshot(http("GET", "/api/auth/me", Some(&legacy), None))
+        .await
+        .expect("legacy me");
+    assert_eq!(legacy_me.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[test]
+fn bump_token_version_makes_the_previous_jwt_stale() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let user = create_user(&conn, "ver@example.com", "password123").expect("user");
+    let token = create_jwt("secret", &user).expect("jwt");
+    let claims = verify_jwt("secret", &token).expect("claims");
+    assert!(token_is_current(&user, &claims));
+
+    let bumped = bump_token_version(&conn, user.id).expect("bump");
+    assert!(!token_is_current(&bumped, &claims));
+    let refreshed = create_jwt("secret", &bumped).expect("new jwt");
+    let next = verify_jwt("secret", &refreshed).expect("next claims");
+    assert!(token_is_current(&bumped, &next));
 }
 
 #[test]

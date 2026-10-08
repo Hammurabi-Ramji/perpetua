@@ -102,6 +102,10 @@ function createAuthStore() {
         }));
       }
     },
+    replaceSession(token: string, user: User) {
+      storeToken(token);
+      update((state) => ({ ...state, token, user, error: null }));
+    },
     async dismissOnboarding() {
       try {
         await completeOnboarding();

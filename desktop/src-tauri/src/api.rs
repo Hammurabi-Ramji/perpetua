@@ -13,22 +13,25 @@ use tower_http::cors::CorsLayer;
 
 use crate::models::{
     AccountRecoverySettings, ActivateRequest, ApiResponse, CreateSiteRequest, EnableCloudBackupRequest,
-    EnableCloudBackupResult, ForgotPasswordRequest, ImportLicensesRequest, InviteMemberRequest,
+    DeviceSyncResult, EnableCloudBackupResult, ForgotPasswordRequest, ImportLicensesRequest,
+    InviteMemberRequest,
     LicensePayload, LicenseUpdate, LoginRequest, RedeemInviteRequest, RegisterRequest,
     ReminderSettingsUpdate, ResetPasswordRequest, RestoreCloudBackupRequest, RestoreResult, VaultStatus,
 };
 use crate::services::{
     activate_pro, add_license, authenticate_user, build_auth_response, confirm_password_reset,
     connect_site, create_backup, create_site, create_user, delete_license, delete_site,
-    disconnect_site, enable_cloud_backup, export_licenses_csv, export_licenses_json,
+    disconnect_site, dismiss_reminder, enable_cloud_backup, export_licenses_csv, export_licenses_json,
     get_account_recovery_settings, get_cloud_backup_settings, get_entitlement, get_license_by_id,
     get_license_stats, get_licenses, get_reminder_items, get_reminder_settings, get_user_by_email,
     get_user_by_id, import_licenses_csv, import_licenses_json, list_backups, list_site_connections,
-    list_vault_members, mark_license_active, mark_onboarding_complete, mark_pro_activated,
+    list_vault_members, load_cloud_access, mark_license_active, mark_onboarding_complete,
+    mark_pro_activated, plan_device_sync,
     prepare_cloud_sync, prepare_invite, prepare_password_reset, record_cloud_sync_result,
-    redeem_invite, resolve_data_owner_id, restore_vault_from_bytes, update_account_recovery_settings,
-    update_license, update_reminder_settings, validate_credentials, vault_has_users, verify_jwt,
-    FreeLimitReached,
+    set_cloud_schedule,
+    redeem_invite, resolve_data_owner_id, restore_vault_from_bytes, snooze_reminder, token_is_current,
+    bump_token_version, update_account_recovery_settings, update_license, update_reminder_settings,
+    validate_credentials, vault_has_users, verify_jwt, FreeLimitReached,
 };
 use rusqlite::Connection;
 use std::collections::VecDeque;
@@ -104,6 +107,7 @@ pub(crate) fn build_router(db: Arc<Mutex<Connection>>, jwt_secret: Arc<String>) 
         .route("/api/auth/login", post(login))
         .route("/api/auth/register", post(register))
         .route("/api/auth/me", get(me))
+        .route("/api/auth/revoke-extension", post(revoke_extension_token_route))
         .route("/api/auth/onboarding/complete", post(complete_onboarding_route))
         .route("/api/auth/forgot-password", post(forgot_password_route))
         .route("/api/auth/reset-password", post(reset_password_route))
@@ -121,6 +125,12 @@ pub(crate) fn build_router(db: Arc<Mutex<Connection>>, jwt_secret: Arc<String>) 
             get(get_single_license).patch(update_single_license).delete(delete_single_license),
         )
         .route("/api/licenses/:id/active", post(mark_active_route))
+        .route(
+            "/api/activity/settings",
+            get(get_activity_settings_route).patch(update_activity_settings_route),
+        )
+        .route("/api/activity/hosts", get(activity_hosts_route))
+        .route("/api/activity/visit", post(activity_visit_route))
         .route("/api/sites/connections", get(get_site_connections))
         .route("/api/sites", post(create_site_route))
         .route("/api/sites/:id/connect", post(connect_site_route))
@@ -134,8 +144,14 @@ pub(crate) fn build_router(db: Arc<Mutex<Connection>>, jwt_secret: Arc<String>) 
         .route("/api/cloud-backup/settings", get(get_cloud_backup_settings_route))
         .route("/api/cloud-backup/enable", post(enable_cloud_backup_route))
         .route("/api/cloud-backup/sync", post(sync_cloud_backup_route))
+        .route("/api/cloud-backup/schedule", post(set_cloud_schedule_route))
+        .route("/api/cloud-backup/sync-devices", post(sync_devices_route))
         .route("/api/cloud-backup/restore", post(restore_cloud_backup_route))
         .route("/api/reminders/items", get(get_reminder_items_route))
+        .route("/api/reminders/snooze", post(snooze_reminder_route))
+        .route("/api/reminders/dismiss", post(dismiss_reminder_route))
+        .route("/api/auto-maintain", get(list_auto_maintain_route))
+        .route("/api/auto-maintain/:id", post(set_auto_maintain_route))
         .route("/api/reminders/settings", get(get_settings).patch(update_settings))
         .route("/api/vendor-policies", get(vendor_policies_meta))
         .route("/api/vendor-policies/suggest", get(vendor_policy_suggest))
@@ -337,7 +353,41 @@ async fn authorized_user(
                 .into_response()
         })?;
 
+    if !token_is_current(&user, &claims) {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ApiResponse::<serde_json::Value> {
+                success: false,
+                data: None,
+                message: Some("This token has been revoked. Sign in again.".to_string()),
+            }),
+        )
+            .into_response());
+    }
+
     Ok(user)
+}
+
+/// Bumps `token_version`, which invalidates the browser-extension pairing
+/// token (and any other JWT issued before this call). Returns a fresh
+/// desktop session so the app that requested the revoke stays signed in.
+async fn revoke_extension_token_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+
+    let conn = db.lock().await;
+    match bump_token_version(&conn, user.id) {
+        Ok(user) => match build_auth_response(jwt_secret.as_str(), user) {
+            Ok(response) => success(response),
+            Err(_) => failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to issue a replacement session"),
+        },
+        Err(_) => failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to revoke the extension token"),
+    }
 }
 
 /// Resolves the vault whose data a request should act on: the caller's own,
@@ -983,7 +1033,7 @@ async fn update_settings(
     match update_reminder_settings(&conn, user.id, payload) {
         Ok(Some(settings)) => success(settings),
         Ok(None) => failure(StatusCode::NOT_FOUND, "Settings not found"),
-        Err(_) => failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to update settings"),
+        Err(error) => failure(StatusCode::BAD_REQUEST, &error.to_string()),
     }
 }
 
@@ -1004,6 +1054,216 @@ async fn get_reminder_items_route(
     match get_reminder_items(&conn, owner_id) {
         Ok(items) => success(items),
         Err(_) => failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to fetch reminder items"),
+    }
+}
+
+#[derive(Deserialize)]
+struct ReminderMuteRequest {
+    license_id: i64,
+    kind: String,
+    due_date: String,
+    /// Snooze only. One of 1, 4, 24, 72, 168.
+    #[serde(default)]
+    hours: Option<i64>,
+}
+
+async fn snooze_reminder_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+    Json(payload): Json<ReminderMuteRequest>,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+    let conn = db.lock().await;
+    let owner_id = match resolved_owner(&conn, &user) {
+        Ok(id) => id,
+        Err(error) => return error,
+    };
+    match snooze_reminder(
+        &conn,
+        owner_id,
+        payload.license_id,
+        &payload.kind,
+        &payload.due_date,
+        payload.hours.unwrap_or(24),
+    ) {
+        Ok(()) => success(json!({ "snoozed": true })),
+        Err(error) => failure(StatusCode::BAD_REQUEST, &error.to_string()),
+    }
+}
+
+async fn dismiss_reminder_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+    Json(payload): Json<ReminderMuteRequest>,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+    let conn = db.lock().await;
+    let owner_id = match resolved_owner(&conn, &user) {
+        Ok(id) => id,
+        Err(error) => return error,
+    };
+    match dismiss_reminder(&conn, owner_id, payload.license_id, &payload.kind, &payload.due_date) {
+        Ok(()) => success(json!({ "dismissed": true })),
+        Err(error) => failure(StatusCode::BAD_REQUEST, &error.to_string()),
+    }
+}
+
+#[derive(Deserialize)]
+struct ActivitySettingsUpdate {
+    enabled: bool,
+}
+
+#[derive(Deserialize)]
+struct ActivityVisitRequest {
+    host: String,
+}
+
+async fn get_activity_settings_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+    let conn = db.lock().await;
+    match crate::activity::activity_inference_enabled(&conn, user.id) {
+        Ok(enabled) => success(json!({ "enabled": enabled })),
+        Err(_) => failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to read activity settings"),
+    }
+}
+
+async fn update_activity_settings_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+    Json(payload): Json<ActivitySettingsUpdate>,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+    let conn = db.lock().await;
+    match crate::activity::set_activity_inference(&conn, user.id, payload.enabled) {
+        Ok(enabled) => success(json!({ "enabled": enabled })),
+        Err(error) => failure(StatusCode::BAD_REQUEST, &error.to_string()),
+    }
+}
+
+async fn activity_hosts_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+    let conn = db.lock().await;
+    let owner_id = match resolved_owner(&conn, &user) {
+        Ok(id) => id,
+        Err(error) => return error,
+    };
+    match crate::activity::tracked_hosts(&conn, user.id, owner_id) {
+        Ok(hosts) => success(json!({ "hosts": hosts })),
+        Err(_) => failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to list tracked hosts"),
+    }
+}
+
+async fn activity_visit_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+    Json(payload): Json<ActivityVisitRequest>,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+    let conn = db.lock().await;
+    let owner_id = match resolved_owner(&conn, &user) {
+        Ok(id) => id,
+        Err(error) => return error,
+    };
+    match crate::activity::record_host_visit(&conn, user.id, owner_id, &payload.host) {
+        Ok(updated) => success(json!({ "updated": updated })),
+        Err(error) => failure(StatusCode::FORBIDDEN, &error.to_string()),
+    }
+}
+
+#[derive(Deserialize)]
+struct AutoMaintainUpdate {
+    enabled: bool,
+    #[serde(default)]
+    username: Option<String>,
+    #[serde(default)]
+    password: Option<String>,
+}
+
+async fn list_auto_maintain_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+    let conn = db.lock().await;
+    let owner_id = match resolved_owner(&conn, &user) {
+        Ok(id) => id,
+        Err(error) => return error,
+    };
+    match crate::auto_maintain::list_auto_maintain(&conn, owner_id) {
+        Ok(rows) => success(rows),
+        Err(_) => failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to list Auto-Maintain settings"),
+    }
+}
+
+async fn set_auto_maintain_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+    Path(license_id): Path<i64>,
+    Json(payload): Json<AutoMaintainUpdate>,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+    let conn = db.lock().await;
+    let owner_id = match resolved_owner(&conn, &user) {
+        Ok(id) => id,
+        Err(error) => return error,
+    };
+    match crate::auto_maintain::set_auto_maintain(
+        &conn,
+        owner_id,
+        license_id,
+        payload.enabled,
+        payload.username.as_deref(),
+        payload.password.as_deref(),
+    ) {
+        Ok(row) => {
+            let body = serde_json::to_string(&row).unwrap_or_default();
+            if payload.password.as_deref().is_some_and(|password| !password.is_empty() && body.contains(password))
+            {
+                return failure(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Refusing to return a vendor password.",
+                );
+            }
+            success(row)
+        }
+        Err(error) => {
+            let status = if error.to_string().contains("Pro feature") {
+                StatusCode::PAYMENT_REQUIRED
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            failure(status, &error.to_string())
+        }
     }
 }
 
@@ -1174,6 +1434,30 @@ async fn enable_cloud_backup_route(
     success(result)
 }
 
+#[derive(Deserialize)]
+struct CloudScheduleRequest {
+    enabled: bool,
+    #[serde(default)]
+    interval_hours: i64,
+}
+
+async fn set_cloud_schedule_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+    Json(payload): Json<CloudScheduleRequest>,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+    let hours = if payload.interval_hours == 0 { 24 } else { payload.interval_hours };
+    let conn = db.lock().await;
+    match set_cloud_schedule(&conn, user.id, payload.enabled, hours) {
+        Ok(settings) => success(settings),
+        Err(error) => failure(StatusCode::BAD_REQUEST, &error.to_string()),
+    }
+}
+
 async fn sync_cloud_backup_route(
     State((db, jwt_secret)): State<(DbState, Arc<String>)>,
     headers: HeaderMap,
@@ -1217,6 +1501,115 @@ async fn sync_cloud_backup_route(
             Err(_) => failure(StatusCode::INTERNAL_SERVER_ERROR, "Backup uploaded, but failed to refresh status"),
         },
         Err(error) => failure(StatusCode::BAD_GATEWAY, &error.to_string()),
+    }
+}
+
+/// Compares this computer with the shared cloud backup and either uploads
+/// local changes or downloads the remote vault when the remote revision is
+/// strictly newer. Last-write-wins by vault timestamp. A wrong recovery key
+/// fails before anything is replaced. A newer or equal local vault is never
+/// downloaded over.
+async fn sync_devices_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+
+    let access = {
+        let conn = db.lock().await;
+        match load_cloud_access(&conn, user.id) {
+            Ok(access) => access,
+            Err(error) => return failure(StatusCode::BAD_REQUEST, &error.to_string()),
+        }
+    };
+    let target = crate::cloud_backup::WebDavTarget {
+        base_url: &access.webdav_url,
+        username: &access.webdav_username,
+        password: &access.webdav_password,
+        remote_path: &access.remote_path,
+    };
+
+    let remote = crate::cloud_backup::download(&target, &access.recovery_key).await;
+    let plaintext = match remote {
+        Ok(bytes) => Some(bytes),
+        Err(error) if crate::cloud_backup::remote_is_missing(&error) => None,
+        Err(error) => {
+            let conn = db.lock().await;
+            let message = format!("{error} The local vault was not changed.");
+            let _ = record_cloud_sync_result(&conn, user.id, Some(&message));
+            return failure(StatusCode::BAD_GATEWAY, &message);
+        }
+    };
+
+    let plan = if let Some(bytes) = &plaintext {
+        let conn = db.lock().await;
+        match plan_device_sync(&conn, bytes) {
+            Ok(plan) => plan,
+            Err(error) => {
+                let message = format!("{error} The local vault was not changed.");
+                let _ = record_cloud_sync_result(&conn, user.id, Some(&message));
+                return failure(StatusCode::BAD_GATEWAY, &message);
+            }
+        }
+    } else {
+        let conn = db.lock().await;
+        let local_revision = crate::services::vault_revision(&conn).unwrap_or_default();
+        DeviceSyncResult {
+            action: "upload".to_string(),
+            local_revision,
+            remote_revision: String::new(),
+        }
+    };
+
+    if plan.action == "up_to_date" {
+        return success(plan);
+    }
+
+    if plan.action == "download" {
+        let bytes = plaintext.expect("download plan has remote bytes");
+        return match restore_vault_from_bytes(&db, &bytes).await {
+            Ok(_) => success(plan),
+            Err(error) => {
+                crate::diag::log(&format!("device sync download failed: {error}"));
+                failure(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &format!("{error} The previous local vault was kept."),
+                )
+            }
+        };
+    }
+
+    let prepared = {
+        let conn = db.lock().await;
+        prepare_cloud_sync(&conn, user.id)
+    };
+    let context = match prepared {
+        Ok(context) => context,
+        Err(error) => return failure(StatusCode::BAD_REQUEST, &error.to_string()),
+    };
+    let bytes = match std::fs::read(&context.backup_path) {
+        Ok(bytes) => bytes,
+        Err(_) => return failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to read local backup"),
+    };
+    let upload_target = crate::cloud_backup::WebDavTarget {
+        base_url: &context.webdav_url,
+        username: &context.webdav_username,
+        password: &context.webdav_password,
+        remote_path: &context.remote_path,
+    };
+    let upload_result = crate::cloud_backup::upload(&upload_target, &context.recovery_key, &bytes).await;
+    let conn = db.lock().await;
+    let error_message = upload_result.as_ref().err().map(|error| error.to_string());
+    let _ = record_cloud_sync_result(&conn, user.id, error_message.as_deref());
+    match upload_result {
+        Ok(()) => success(plan),
+        Err(error) => failure(
+            StatusCode::BAD_GATEWAY,
+            &format!("{error} The previous cloud backup was left in place, and the local vault was not replaced."),
+        ),
     }
 }
 

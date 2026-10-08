@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const apiScript = fs.readFileSync(path.join(__dirname, '..', 'lib', 'api.js'), 'utf8');
+const activityScript = fs.readFileSync(path.join(__dirname, '..', 'lib', 'activity.js'), 'utf8');
 const backgroundScript = fs.readFileSync(path.join(__dirname, '..', 'background.js'), 'utf8');
 
 // A macrotask flush (not a fixed number of microtask ticks) — the chain
@@ -45,7 +46,11 @@ describe('background service worker', () => {
         },
       },
       notifications: { create: vi.fn() },
-      tabs: { query: vi.fn().mockResolvedValue([]), sendMessage: vi.fn() },
+      tabs: {
+        query: vi.fn().mockResolvedValue([]),
+        sendMessage: vi.fn(),
+        onUpdated: { addListener: vi.fn() },
+      },
     };
     global.fetch = vi.fn();
     // background.js is a classic (non-module) service worker script that
@@ -53,6 +58,7 @@ describe('background service worker', () => {
     // eval both scripts into the same global scope below instead.
     global.importScripts = vi.fn();
 
+    window.eval(activityScript);
     window.eval(apiScript);
     window.eval(backgroundScript);
   });
@@ -198,5 +204,32 @@ describe('background service worker', () => {
     expect(url).toBe('http://127.0.0.1:18765/api/licenses');
     expect(init.headers.Authorization).toBe('Bearer test-token');
     expect(sendResponse).toHaveBeenCalledWith({ ok: true, licenses: [{ id: 1, product_name: 'Suite Pro' }] });
+  });
+
+  it('does not report a visit when activity inference is off', async () => {
+    const listener = chrome.tabs.onUpdated.addListener.mock.calls[0][0];
+    listener(1, { status: 'complete' }, { url: 'https://vendor.test/secret-path' });
+    await flush();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('reports only a matching hostname when activity inference is on', async () => {
+    chrome.storage.local.get.mockResolvedValue({
+      apiBase: 'http://127.0.0.1:18765',
+      apiToken: 'test-token',
+      activityInference: true,
+    });
+    global.fetch
+      .mockResolvedValueOnce(jsonResponse(200, { success: true, data: { hosts: ['vendor.test'] } }))
+      .mockResolvedValueOnce(jsonResponse(200, { success: true, data: { updated: [1] } }));
+
+    const listener = chrome.tabs.onUpdated.addListener.mock.calls[0][0];
+    listener(1, { status: 'complete' }, { url: 'https://app.vendor.test/secret-path?q=1' });
+    await flush();
+
+    const visitCall = global.fetch.mock.calls.find((call) => String(call[0]).endsWith('/api/activity/visit'));
+    expect(visitCall).toBeTruthy();
+    expect(JSON.parse(visitCall[1].body)).toEqual({ host: 'app.vendor.test' });
+    expect(visitCall[1].body).not.toContain('secret-path');
   });
 });

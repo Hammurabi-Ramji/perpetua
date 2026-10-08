@@ -108,6 +108,13 @@ export interface ReminderSettings {
   browser_notifications: boolean;
 }
 
+export interface AutoMaintainLicense {
+  license_id: number;
+  product_name: string;
+  enabled: boolean;
+  credential_set: boolean;
+}
+
 export interface ReminderItem {
   license_id: number;
   product_name: string;
@@ -144,6 +151,8 @@ export interface CloudBackupSettings {
   recovery_key_generated_at: string | null;
   last_synced_at: string | null;
   last_sync_error: string | null;
+  schedule_enabled?: boolean;
+  schedule_interval_hours?: number;
 }
 
 export interface EnableCloudBackupInput {
@@ -171,6 +180,12 @@ export interface RestoreCloudBackupInput {
   recovery_key: string;
   /** Required once the install already has an account (destructive replace). */
   confirm?: boolean;
+}
+
+export interface DeviceSyncResult {
+  action: "upload" | "download" | "up_to_date" | string;
+  local_revision: string;
+  remote_revision: string;
 }
 
 export interface RestoreResult {
