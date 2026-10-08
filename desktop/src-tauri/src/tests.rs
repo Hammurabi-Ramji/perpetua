@@ -806,6 +806,108 @@ fn password_reset_round_trip_requires_backup_email_and_smtp() {
 }
 
 #[test]
+fn device_sync_plan_refuses_a_newer_local_vault_and_a_bad_payload() {
+    let local_dir = tempdir().expect("local");
+    let local = init_db_at(local_dir.path()).expect("local db");
+    let user = create_user(&local, "sync@example.com", "password123").expect("user");
+    let license = add_license(&local, user.id, sample_license("Local Tool", None)).expect("license");
+    local
+        .execute(
+            "UPDATE users SET created_at = '2020-01-01T00:00:00+00:00' WHERE id = ?1",
+            rusqlite::params![user.id],
+        )
+        .expect("stamp user");
+    local
+        .execute(
+            "UPDATE licenses SET updated_at = '2026-03-01T00:00:00+00:00' WHERE id = ?1",
+            rusqlite::params![license.id],
+        )
+        .expect("stamp license");
+
+    let remote_dir = tempdir().expect("remote");
+    let remote = init_db_at(remote_dir.path()).expect("remote db");
+    let remote_user = create_user(&remote, "sync@example.com", "password123").expect("remote user");
+    let remote_license = add_license(&remote, remote_user.id, sample_license("Remote Tool", None)).expect("remote license");
+    remote
+        .execute(
+            "UPDATE users SET created_at = '2020-01-01T00:00:00+00:00' WHERE id = ?1",
+            rusqlite::params![remote_user.id],
+        )
+        .expect("stamp remote user");
+    remote
+        .execute(
+            "UPDATE licenses SET updated_at = '2026-01-01T00:00:00+00:00' WHERE id = ?1",
+            rusqlite::params![remote_license.id],
+        )
+        .expect("stamp remote license");
+    drop(remote);
+    let older_remote = std::fs::read(db_path_at(remote_dir.path()).expect("path")).expect("bytes");
+
+    let plan = crate::services::plan_device_sync(&local, &older_remote).expect("plan");
+    assert_eq!(plan.action, "upload");
+    assert_eq!(
+        get_license_by_id(&local, user.id, license.id).expect("fetch").expect("row").product_name,
+        "Local Tool"
+    );
+
+    let same = std::fs::read(db_path_at(local_dir.path()).expect("local path")).expect("local bytes");
+    // The on-disk file may lag the open connection; compare via a second database
+    // whose license timestamp matches the local one.
+    let _ = same;
+    let twin_dir = tempdir().expect("twin");
+    let twin = init_db_at(twin_dir.path()).expect("twin db");
+    let twin_user = create_user(&twin, "sync@example.com", "password123").expect("twin user");
+    let twin_license = add_license(&twin, twin_user.id, sample_license("Twin Tool", None)).expect("twin license");
+    twin
+        .execute(
+            "UPDATE users SET created_at = '2020-01-01T00:00:00+00:00'",
+            [],
+        )
+        .expect("stamp");
+    twin
+        .execute(
+            "UPDATE licenses SET updated_at = '2026-03-01T00:00:00+00:00'",
+            [],
+        )
+        .expect("stamp");
+    drop(twin);
+    let equal_bytes = std::fs::read(db_path_at(twin_dir.path()).expect("twin path")).expect("twin bytes");
+    let equal = crate::services::plan_device_sync(&local, &equal_bytes).expect("equal");
+    assert_eq!(equal.action, "up_to_date");
+
+    let newer_dir = tempdir().expect("newer");
+    let newer = init_db_at(newer_dir.path()).expect("newer db");
+    let newer_user = create_user(&newer, "sync@example.com", "password123").expect("newer user");
+    add_license(&newer, newer_user.id, sample_license("Newer Tool", None)).expect("newer license");
+    newer
+        .execute("UPDATE users SET created_at = '2020-01-01T00:00:00+00:00'", [])
+        .expect("stamp");
+    newer
+        .execute("UPDATE licenses SET updated_at = '2026-08-01T00:00:00+00:00'", [])
+        .expect("stamp");
+    drop(newer);
+    let newer_bytes = std::fs::read(db_path_at(newer_dir.path()).expect("newer path")).expect("newer bytes");
+    let download = crate::services::plan_device_sync(&local, &newer_bytes).expect("download");
+    assert_eq!(download.action, "download");
+    assert_eq!(
+        get_license_by_id(&local, user.id, license.id).expect("fetch").expect("row").product_name,
+        "Local Tool",
+        "planning a download must not replace the local vault"
+    );
+
+    let key_a = crate::cloud_backup::generate_recovery_key();
+    let key_b = crate::cloud_backup::generate_recovery_key();
+    let blob = crate::cloud_backup::encrypt(&key_a, b"secret vault bytes").expect("encrypt");
+    assert!(crate::cloud_backup::decrypt(&key_b, &blob).is_err());
+    assert!(crate::services::plan_device_sync(&local, &blob).is_err());
+    assert_eq!(
+        get_license_by_id(&local, user.id, license.id).expect("fetch").expect("row").product_name,
+        "Local Tool"
+    );
+    let _ = twin_license;
+}
+
+#[test]
 fn cloud_schedule_defaults_off_and_a_failure_keeps_the_last_success() {
     use crate::services::{cloud_schedule_due, get_cloud_backup_settings, record_cloud_sync_result, users_due_for_scheduled_sync};
     let now = chrono::Utc::now();

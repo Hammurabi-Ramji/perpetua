@@ -175,6 +175,12 @@ export interface RestoreCloudBackupInput {
   confirm?: boolean;
 }
 
+export interface DeviceSyncResult {
+  action: "upload" | "download" | "up_to_date" | string;
+  local_revision: string;
+  remote_revision: string;
+}
+
 export interface RestoreResult {
   restored: boolean;
   /** File name of the automatic pre-restore snapshot, if one was taken. */

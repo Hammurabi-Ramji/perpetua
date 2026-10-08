@@ -344,6 +344,15 @@ pub struct RestoreResult {
     pub snapshot: Option<String>,
 }
 
+/// Result of comparing this computer with the shared cloud backup.
+/// `action` is `upload`, `download`, or `up_to_date`.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DeviceSyncResult {
+    pub action: String,
+    pub local_revision: String,
+    pub remote_revision: String,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ApiResponse<T> {
     pub success: bool,

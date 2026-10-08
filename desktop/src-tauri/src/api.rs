@@ -13,7 +13,8 @@ use tower_http::cors::CorsLayer;
 
 use crate::models::{
     AccountRecoverySettings, ActivateRequest, ApiResponse, CreateSiteRequest, EnableCloudBackupRequest,
-    EnableCloudBackupResult, ForgotPasswordRequest, ImportLicensesRequest, InviteMemberRequest,
+    DeviceSyncResult, EnableCloudBackupResult, ForgotPasswordRequest, ImportLicensesRequest,
+    InviteMemberRequest,
     LicensePayload, LicenseUpdate, LoginRequest, RedeemInviteRequest, RegisterRequest,
     ReminderSettingsUpdate, ResetPasswordRequest, RestoreCloudBackupRequest, RestoreResult, VaultStatus,
 };
@@ -24,7 +25,8 @@ use crate::services::{
     get_account_recovery_settings, get_cloud_backup_settings, get_entitlement, get_license_by_id,
     get_license_stats, get_licenses, get_reminder_items, get_reminder_settings, get_user_by_email,
     get_user_by_id, import_licenses_csv, import_licenses_json, list_backups, list_site_connections,
-    list_vault_members, mark_license_active, mark_onboarding_complete, mark_pro_activated,
+    list_vault_members, load_cloud_access, mark_license_active, mark_onboarding_complete,
+    mark_pro_activated, plan_device_sync,
     prepare_cloud_sync, prepare_invite, prepare_password_reset, record_cloud_sync_result,
     set_cloud_schedule,
     redeem_invite, resolve_data_owner_id, restore_vault_from_bytes, snooze_reminder, token_is_current,
@@ -143,6 +145,7 @@ pub(crate) fn build_router(db: Arc<Mutex<Connection>>, jwt_secret: Arc<String>) 
         .route("/api/cloud-backup/enable", post(enable_cloud_backup_route))
         .route("/api/cloud-backup/sync", post(sync_cloud_backup_route))
         .route("/api/cloud-backup/schedule", post(set_cloud_schedule_route))
+        .route("/api/cloud-backup/sync-devices", post(sync_devices_route))
         .route("/api/cloud-backup/restore", post(restore_cloud_backup_route))
         .route("/api/reminders/items", get(get_reminder_items_route))
         .route("/api/reminders/snooze", post(snooze_reminder_route))
@@ -1423,6 +1426,115 @@ async fn sync_cloud_backup_route(
             Err(_) => failure(StatusCode::INTERNAL_SERVER_ERROR, "Backup uploaded, but failed to refresh status"),
         },
         Err(error) => failure(StatusCode::BAD_GATEWAY, &error.to_string()),
+    }
+}
+
+/// Compares this computer with the shared cloud backup and either uploads
+/// local changes or downloads the remote vault when the remote revision is
+/// strictly newer. Last-write-wins by vault timestamp. A wrong recovery key
+/// fails before anything is replaced. A newer or equal local vault is never
+/// downloaded over.
+async fn sync_devices_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+
+    let access = {
+        let conn = db.lock().await;
+        match load_cloud_access(&conn, user.id) {
+            Ok(access) => access,
+            Err(error) => return failure(StatusCode::BAD_REQUEST, &error.to_string()),
+        }
+    };
+    let target = crate::cloud_backup::WebDavTarget {
+        base_url: &access.webdav_url,
+        username: &access.webdav_username,
+        password: &access.webdav_password,
+        remote_path: &access.remote_path,
+    };
+
+    let remote = crate::cloud_backup::download(&target, &access.recovery_key).await;
+    let plaintext = match remote {
+        Ok(bytes) => Some(bytes),
+        Err(error) if crate::cloud_backup::remote_is_missing(&error) => None,
+        Err(error) => {
+            let conn = db.lock().await;
+            let message = format!("{error} The local vault was not changed.");
+            let _ = record_cloud_sync_result(&conn, user.id, Some(&message));
+            return failure(StatusCode::BAD_GATEWAY, &message);
+        }
+    };
+
+    let plan = if let Some(bytes) = &plaintext {
+        let conn = db.lock().await;
+        match plan_device_sync(&conn, bytes) {
+            Ok(plan) => plan,
+            Err(error) => {
+                let message = format!("{error} The local vault was not changed.");
+                let _ = record_cloud_sync_result(&conn, user.id, Some(&message));
+                return failure(StatusCode::BAD_GATEWAY, &message);
+            }
+        }
+    } else {
+        let conn = db.lock().await;
+        let local_revision = crate::services::vault_revision(&conn).unwrap_or_default();
+        DeviceSyncResult {
+            action: "upload".to_string(),
+            local_revision,
+            remote_revision: String::new(),
+        }
+    };
+
+    if plan.action == "up_to_date" {
+        return success(plan);
+    }
+
+    if plan.action == "download" {
+        let bytes = plaintext.expect("download plan has remote bytes");
+        return match restore_vault_from_bytes(&db, &bytes).await {
+            Ok(_) => success(plan),
+            Err(error) => {
+                crate::diag::log(&format!("device sync download failed: {error}"));
+                failure(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &format!("{error} The previous local vault was kept."),
+                )
+            }
+        };
+    }
+
+    let prepared = {
+        let conn = db.lock().await;
+        prepare_cloud_sync(&conn, user.id)
+    };
+    let context = match prepared {
+        Ok(context) => context,
+        Err(error) => return failure(StatusCode::BAD_REQUEST, &error.to_string()),
+    };
+    let bytes = match std::fs::read(&context.backup_path) {
+        Ok(bytes) => bytes,
+        Err(_) => return failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to read local backup"),
+    };
+    let upload_target = crate::cloud_backup::WebDavTarget {
+        base_url: &context.webdav_url,
+        username: &context.webdav_username,
+        password: &context.webdav_password,
+        remote_path: &context.remote_path,
+    };
+    let upload_result = crate::cloud_backup::upload(&upload_target, &context.recovery_key, &bytes).await;
+    let conn = db.lock().await;
+    let error_message = upload_result.as_ref().err().map(|error| error.to_string());
+    let _ = record_cloud_sync_result(&conn, user.id, error_message.as_deref());
+    match upload_result {
+        Ok(()) => success(plan),
+        Err(error) => failure(
+            StatusCode::BAD_GATEWAY,
+            &format!("{error} The previous cloud backup was left in place, and the local vault was not replaced."),
+        ),
     }
 }
 

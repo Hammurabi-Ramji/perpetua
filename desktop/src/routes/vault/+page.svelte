@@ -13,7 +13,8 @@
 		listBackups,
 		restoreCloudBackup,
 		setCloudSchedule,
-		syncCloudBackupNow
+		syncCloudBackupNow,
+		syncDevices
 	} from '$lib/api';
 	import { auth } from '$lib/stores/auth';
 	import { entitlement, handleAddError, refreshEntitlement } from '$lib/stores/entitlement';
@@ -40,6 +41,7 @@
 	let scheduleEnabled = false;
 	let scheduleHours = 24;
 	let scheduleBusy = false;
+	let deviceSyncBusy = false;
 	let cloudError = '';
 	let cloudMessage = '';
 	// Opt-in: minting a new key orphans every backup already uploaded with the old one.
@@ -278,6 +280,32 @@
 			}
 		} finally {
 			cloudBusy = false;
+		}
+	}
+
+	async function handleDeviceSync() {
+		deviceSyncBusy = true;
+		cloudError = '';
+		cloudMessage = '';
+		try {
+			const result = await syncDevices();
+			if (result.action === 'download') {
+				cloudMessage =
+					'The cloud copy was newer, so this computer was updated from it. A snapshot of the previous vault was kept. Last write wins by vault timestamp.';
+			} else if (result.action === 'upload') {
+				cloudMessage =
+					'This computer was newer, so its vault was uploaded. The local vault was not replaced.';
+			} else {
+				cloudMessage = 'Both copies have the same timestamp. Nothing was replaced.';
+			}
+			await loadCloudSettings();
+		} catch (syncError) {
+			cloudError =
+				syncError instanceof Error
+					? syncError.message
+					: 'Could not sync with the other computer. The local vault was not replaced.';
+		} finally {
+			deviceSyncBusy = false;
 		}
 	}
 
@@ -520,6 +548,9 @@
 					<button type="button" class="secondary" disabled={cloudSyncBusy} on:click={handleSyncCloudBackup}>
 						{cloudSyncBusy ? 'Backing up...' : 'Back up to cloud now'}
 					</button>
+					<button type="button" class="secondary" disabled={deviceSyncBusy} on:click={handleDeviceSync}>
+						{deviceSyncBusy ? 'Syncing...' : 'Sync with another computer'}
+					</button>
 				{/if}
 			</div>
 		</form>
@@ -555,9 +586,11 @@
 					</select>
 				</label>
 				<p class="muted small">
-					Uses the same WebDAV upload as the button above, still one remote copy. This is not
-					live multi-device sync. If an upload fails, Perpetua logs it and does not replace the
-					previous good backup.
+					Uses the same WebDAV upload as the button above, still one remote copy. A schedule is
+					not live multi-device sync. If an upload fails, Perpetua logs it and does not replace
+					the previous good backup. Sync with another computer compares timestamps and only
+					replaces this vault when the cloud copy is strictly newer (last write wins). A wrong
+					recovery key stops the sync and leaves this computer's vault as it is.
 				</p>
 				<button type="button" class="secondary" disabled={scheduleBusy} on:click={handleSaveSchedule}>
 					{scheduleBusy ? 'Saving…' : 'Save schedule'}

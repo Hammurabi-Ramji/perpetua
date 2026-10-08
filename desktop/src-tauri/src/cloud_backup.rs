@@ -236,6 +236,28 @@ async fn download_raw(target: &WebDavTarget<'_>) -> Result<Vec<u8>> {
     Ok(encrypted.to_vec())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncDecision {
+    Upload,
+    Download,
+    UpToDate,
+}
+
+/// Last-write-wins by revision string. RFC3339 timestamps sort in time order.
+/// An equal timestamp does not download, so a local vault that is not older
+/// is never replaced.
+pub fn decide_sync(local_revision: &str, remote_revision: &str) -> SyncDecision {
+    match local_revision.cmp(remote_revision) {
+        std::cmp::Ordering::Greater => SyncDecision::Upload,
+        std::cmp::Ordering::Less => SyncDecision::Download,
+        std::cmp::Ordering::Equal => SyncDecision::UpToDate,
+    }
+}
+
+pub fn remote_is_missing(error: &anyhow::Error) -> bool {
+    error.to_string().contains("404")
+}
+
 /// Downloads and decrypts the current cloud backup.
 pub async fn download(target: &WebDavTarget<'_>, recovery_key_b64: &str) -> Result<Vec<u8>> {
     validate_server_url(target.base_url)?;
@@ -254,6 +276,14 @@ mod tests {
         let encrypted = encrypt(&key, plaintext).expect("encrypt");
         let decrypted = decrypt(&key, &encrypted).expect("decrypt");
         assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn decide_sync_does_not_download_over_a_newer_or_equal_local_revision() {
+        assert_eq!(decide_sync("2026-02-02T00:00:00Z", "2026-01-01T00:00:00Z"), SyncDecision::Upload);
+        assert_eq!(decide_sync("2026-01-01T00:00:00Z", "2026-02-02T00:00:00Z"), SyncDecision::Download);
+        assert_eq!(decide_sync("2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"), SyncDecision::UpToDate);
+        assert_eq!(decide_sync("", "2026-01-01T00:00:00Z"), SyncDecision::Download);
     }
 
     #[test]

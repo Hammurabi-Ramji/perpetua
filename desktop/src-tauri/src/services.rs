@@ -2076,7 +2076,15 @@ pub fn enable_cloud_backup(
 /// caller (the API route handler) must drop the lock before doing the actual
 /// network upload; see `record_cloud_sync_result` for recording the outcome
 /// afterward under a fresh, brief lock.
-pub fn prepare_cloud_sync(conn: &Connection, user_id: i64) -> Result<CloudSyncContext> {
+pub struct CloudAccess {
+    pub webdav_url: String,
+    pub webdav_username: String,
+    pub webdav_password: String,
+    pub remote_path: String,
+    pub recovery_key: String,
+}
+
+pub fn load_cloud_access(conn: &Connection, user_id: i64) -> Result<CloudAccess> {
     if !is_pro(conn)? {
         return Err(anyhow!("Cloud backup is a Pro feature."));
     }
@@ -2108,17 +2116,77 @@ pub fn prepare_cloud_sync(conn: &Connection, user_id: i64) -> Result<CloudSyncCo
     let recovery_key = crate::secret_store::read(crate::secret_store::BACKUP_KEY, user_id)
         .ok_or_else(|| anyhow!("Recovery key is missing — re-enable cloud backup to generate a new one."))?;
 
-    let directory = backup_dir()?;
-    let backup_entry = create_backup_in_dir(conn, &directory)?;
-    let backup_path = directory.join(&backup_entry.file_name);
-
-    Ok(CloudSyncContext {
+    Ok(CloudAccess {
         webdav_url,
         webdav_username,
         webdav_password,
         remote_path,
         recovery_key,
+    })
+}
+
+pub fn prepare_cloud_sync(conn: &Connection, user_id: i64) -> Result<CloudSyncContext> {
+    let access = load_cloud_access(conn, user_id)?;
+    let directory = backup_dir()?;
+    let backup_entry = create_backup_in_dir(conn, &directory)?;
+    let backup_path = directory.join(&backup_entry.file_name);
+
+    Ok(CloudSyncContext {
+        webdav_url: access.webdav_url,
+        webdav_username: access.webdav_username,
+        webdav_password: access.webdav_password,
+        remote_path: access.remote_path,
+        recovery_key: access.recovery_key,
         backup_path,
+    })
+}
+
+/// Newest license or account timestamp in this vault. Used as the
+/// last-write-wins clock for multi-device sync.
+pub fn vault_revision(conn: &Connection) -> Result<String> {
+    let from_licenses: Option<String> =
+        conn.query_row("SELECT MAX(updated_at) FROM licenses", [], |row| row.get(0))?;
+    let from_users: Option<String> =
+        conn.query_row("SELECT MAX(created_at) FROM users", [], |row| row.get(0))?;
+    Ok(match (from_licenses, from_users) {
+        (Some(licenses), Some(users)) if licenses >= users => licenses,
+        (Some(_), Some(users)) => users,
+        (Some(licenses), None) => licenses,
+        (None, Some(users)) => users,
+        (None, None) => String::new(),
+    })
+}
+
+pub fn revision_from_sqlite_bytes(bytes: &[u8]) -> Result<String> {
+    let path = std::env::temp_dir().join(format!("perpetua-rev-{}.db", uuid::Uuid::new_v4()));
+    fs::write(&path, bytes)?;
+    let revision = match Connection::open(&path) {
+        Ok(remote) => vault_revision(&remote),
+        Err(error) => Err(anyhow!("Remote backup is not a readable vault: {error}")),
+    };
+    let _ = fs::remove_file(&path);
+    let revision = revision?;
+    if revision.is_empty() {
+        return Err(anyhow!("Remote backup does not look like a Perpetua vault."));
+    }
+    Ok(revision)
+}
+
+/// Compares revisions only. Does not restore or upload.
+/// A wrong-key ciphertext is not a vault and returns an error, so the caller
+/// must not replace the local database.
+pub fn plan_device_sync(conn: &Connection, remote_plaintext: &[u8]) -> Result<crate::models::DeviceSyncResult> {
+    let local_revision = vault_revision(conn)?;
+    let remote_revision = revision_from_sqlite_bytes(remote_plaintext)?;
+    let action = match crate::cloud_backup::decide_sync(&local_revision, &remote_revision) {
+        crate::cloud_backup::SyncDecision::Upload => "upload",
+        crate::cloud_backup::SyncDecision::Download => "download",
+        crate::cloud_backup::SyncDecision::UpToDate => "up_to_date",
+    };
+    Ok(crate::models::DeviceSyncResult {
+        action: action.to_string(),
+        local_revision,
+        remote_revision,
     })
 }
 

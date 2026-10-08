@@ -362,6 +362,12 @@ export function syncCloudBackupNow() {
   return request<CloudBackupSettings>("/cloud-backup/sync", { method: "POST" });
 }
 
+export function syncDevices() {
+  return request<import("$lib/types").DeviceSyncResult>("/cloud-backup/sync-devices", {
+    method: "POST",
+  });
+}
+
 export function setCloudSchedule(enabled: boolean, intervalHours: number) {
   return request<CloudBackupSettings>("/cloud-backup/schedule", {
     method: "POST",
