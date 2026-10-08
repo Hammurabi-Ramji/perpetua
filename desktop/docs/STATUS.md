@@ -18,7 +18,17 @@ For day-to-day usage, see the [User Guide](./USER_GUIDE.md); for problems, see
   recognized; native desktop notifications fire even when the window is
   closed (background watcher + system tray). Honours the per-account
   "Desktop reminders" toggle, skips refunded/cancelled/expired licenses,
-  and only records a reminder as delivered once the OS accepted it
+  and only records a reminder as delivered once the OS accepted it.
+  Snooze and dismiss are stored per occurrence. Mark as used remains.
+  Email reminders send through the user's own SMTP relay when that toggle
+  is on and the relay is configured; otherwise nothing is marked sent
+- **Activity inference (opt-in)** — when enabled in the app and the browser
+  extension, a visit to a hostname that matches a license resets
+  `last_active` the same way Mark as used does. Only that date is stored
+- **Token revocation** — JWTs carry `token_version`. Password changes and
+  **Revoke extension token** bump it. Stale tokens, including the extension
+  pairing token, are rejected. The desktop session that requested the
+  revoke receives a new token
 - **Launch at login (opt-in)** — a toggle under Reminders; off by default,
   never enabled by the app on its own. A second launch brings the running
   instance to the front instead of fighting it for the API port
@@ -38,8 +48,10 @@ For day-to-day usage, see the [User Guide](./USER_GUIDE.md); for problems, see
   recent kept)
 - **Native menu bar** — File / View / Help, with Sign Out and quick
   navigation to every page
-- **Cross-platform** — installers for Windows, macOS (Apple Silicon), and
-  Linux, all built from the same source
+- **Cross-platform** — release workflow builds Windows, macOS Apple Silicon
+  (`macos-latest`), macOS Intel (`macos-15-intel`, GitHub's last Intel
+  image, through August 2027), and Linux. `macos-13` is not used; it was
+  removed in December 2025
 - **Encrypted cloud backup & restore (Pro)** — back up the vault to your own
   WebDAV storage (HTTPS required; works generically against any WebDAV
   server), encrypted with AES-256-GCM before it leaves the device. Uploads
@@ -50,7 +62,15 @@ For day-to-day usage, see the [User Guide](./USER_GUIDE.md); for problems, see
   session needed — which is what actually makes "get your vault back on a
   new machine" work. Once an install has an account, restore moves behind
   sign-in + an explicit confirmation, and an automatic pre-restore snapshot
-  is taken first.
+  is taken first. An optional schedule (off by default) repeats that same
+  upload. **Sync with another computer** compares vault timestamps:
+  upload if local is newer, download only if the remote copy is strictly
+  newer, do nothing if they match. A wrong recovery key does not replace
+  the local vault. A failed upload does not replace the previous cloud copy
+- **Auto-Maintain (Pro, opt-in per license)** — stores a vendor password in
+  the OS keychain only, writes an audit row for each attempt, and then
+  falls back to the normal keep-alive reminder. It does not log into
+  vendor sites or submit those passwords
 - **Local API hardening** — loopback-only bind, bearer auth, rate limits on
   credential/code routes, and a `Host`-header check that refuses requests
   from DNS-rebinding pages. Emails are case-insensitive; login timing is
@@ -66,33 +86,39 @@ For day-to-day usage, see the [User Guide](./USER_GUIDE.md); for problems, see
 - **Unsigned builds.** Windows shows a SmartScreen warning, macOS a
   Gatekeeper warning, on first launch — expected until code signing is set
   up, not a sign anything is wrong.
-- **macOS: Apple Silicon only.** No Intel (x86_64) build yet.
-- **Vault sharing is same-computer only**, not live cross-device sync. Cloud
-  backup/restore covers the disaster-recovery case (get your vault onto a
-  *new* machine); it isn't real-time multi-device sync — two machines
-  active at once would each need their own backup/restore cycle, not a
-  live shared session.
-- **The vault itself is still not encrypted at rest.** SMTP password,
-  WebDAV password, and the cloud-backup encryption key all live in the OS
-  credential store now — the license keys in the SQLite file do not yet.
-  Biggest open item from the original security review (P1-5).
-- **No email reminders.** Reminder delivery is desktop notifications only.
-  The toggle that implied otherwise has been removed from the UI (the
-  column still exists in the database for a future implementation).
-- **Password reset, sharing invites, and the cloud-backup recovery-key
-  safety net all require your own SMTP relay.** Perpetua has no built-in
-  mail service by design.
-- **"Auto-Maintain" is a placeholder**, not a feature. Automatically
-  completing vendor logins would mean storing vendor credentials and
-  driving a browser — deliberately not built. The card now points at the
-  support mailbox instead of a "Notify me" button that recorded nothing.
-- **No in-app auto-updater.** Reinstall from a new release to update.
-- **No session/token revocation.** JWTs (including the browser extension's
-  pairing token) are stateless with a 30-day expiry and no revocation
-  list — a password change doesn't invalidate tokens issued before it.
-- **Cloud backup keeps one remote copy, not a history.** Each sync
-  overwrites the previous cloud backup; local backups keep their own
-  5-deep rotation independently.
+- **The vault itself is still not encrypted at rest.** `init_db_at` still
+  writes a file whose header is `SQLite format 3`. SQLCipher via
+  `bundled-sqlcipher-vendored-openssl` was not enabled. Exact blocker on
+  this machine: `C:\Program Files\Git\usr\bin\perl.exe` fails with
+  `Can't locate Locale/Maketext/Simple.pm`, and
+  `C:\Strawberry\perl\bin\perl.exe` is not installed. Without that Perl,
+  OpenSSL cannot be configured and the vendored SQLCipher build cannot
+  finish. SMTP, WebDAV, the cloud recovery key, and Auto-Maintain vendor
+  passwords are in the OS credential store. License keys in `licenses.db`
+  are not. This does not protect against malware running as the same user,
+  and neither would SQLCipher.
+- **Password reset, sharing invites, reminder email, and the cloud-backup
+  recovery-key safety net all require your own SMTP relay.** Perpetua has
+  no built-in mail service by design.
+- **Auto-Maintain does not log into vendors.** There is no headless browser
+  and no adapter that can complete 2FA or CAPTCHA. Opted-in licenses get an
+  audit row and the normal reminder.
+- **In-app updates are not configured.** Help → Check for Updates says so
+  and does not download a build. The endpoint is GitHub Releases
+  `latest.json`. The owner must set `plugins.updater.pubkey`, turn on
+  `createUpdaterArtifacts`, and set `TAURI_SIGNING_PRIVATE_KEY` plus
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. No private key was generated here.
+- **Windows code signing is wired, not active.** The release workflow
+  installs `trusted-signing-cli` and passes the Azure Artifact Signing
+  secrets. `PERPETUA_REQUIRE_SIGNING=1` is set on Windows only when
+  `PERPETUA_AZURE_SIGNING_ENDPOINT` is non-empty. No certificate was
+  generated.
+- **Cloud backup keeps one remote object, not a history.** Scheduled upload
+  and device sync both use that object. Device sync is last-write-wins by
+  vault timestamp. It is not a live session. Local backups keep their own
+  5-deep rotation.
+- **Vault sharing is same-computer only.** Two machines use
+  Sync with another computer, not the sharing invite.
 - **Browser extension is unpacked-load only.** Not published to the Chrome
   Web Store; DOM selectors against the four deal sites are inherently
   fragile against site redesigns and haven't been re-verified against live
@@ -116,13 +142,12 @@ replacing the v1.0.0 release assets, clean-machine smoke test) are tracked in
 [`docs/REMAINING_TASKS.md`](../../docs/REMAINING_TASKS.md) at the
 repository root.
 
-- Encrypt the vault itself at rest, not just the secrets around it
-- macOS Intel build (one more CI matrix entry)
-- Code signing for Windows/macOS
-- Email delivery for reminders (the SMTP infrastructure already exists from
-  password reset/sharing) — only once there is a sender to back the toggle
-- Auto-updater
-- Session/token revocation (a `token_version` bump on password change)
+- Encrypt the vault at rest once a Perl that can build OpenSSL is available
+  (Strawberry Perl, or equivalent, ahead of Git's perl on `PATH`)
+- Create the Azure Artifact Signing account and set the secrets the release
+  workflow already reads
+- Generate the Tauri updater keypair and set the pubkey plus
+  `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
 - Verify a real Koofr cloud-backup round-trip and a real restore-on-a-fresh-
   install end to end
 - Verify the browser extension against live deal-site markup; consider a

@@ -75,7 +75,26 @@ required actions — and lets you configure:
 - **Keep-alive days** per license (set on the license form, or accept the
   vendor-policy suggestion) — Perpetua flags a license before its keep-alive
   window lapses so you can log in and reset the clock. Open the license and
-  click **Mark as used** once you have.
+  click **Mark as used** once you have. That button is still the default.
+- **Email reminders** — off until you turn them on, and only after an SMTP
+  relay is saved. Due reminders then go out through that same relay. Saving
+  the toggle does not send a message. If the relay is missing or rejects the
+  message, Perpetua logs it and does not treat the mail as sent. Perpetua
+  does not run a mail server.
+- **Snooze** and **Dismiss** on a reminder row. Snooze hides that due date
+  for the duration you pick (1 hour, 4 hours, 1 day, 3 days, or 1 week).
+  Dismiss hides that due date only. A later due date shows up again. Neither
+  one replaces Mark as used.
+- **Reset keep-alive when I visit a matching site** — off by default. With
+  the browser extension also opted in, opening a hostname that matches one
+  of your licenses resets that license the same way Mark as used does.
+  Perpetua stores only that date. It does not read your inbox.
+
+**Auto-Maintain** (Pro, separate opt-in per license) can store a vendor
+username and password in the OS keychain. Perpetua does not log into the
+vendor, submit that password, or bypass 2FA or CAPTCHA. Each attempt is
+written to an audit log (time, license, outcome) and the normal keep-alive
+reminder still fires. The free vault does not include this.
 
 ## Backup email & password reset
 
@@ -96,9 +115,9 @@ invalidates the previous one.
 ## Sharing your vault (Pro)
 
 Pro accounts can share their license vault with one other local account on the
-**same computer** (e.g. a family member with their own login) — this is not
-cross-device sync; Perpetua doesn't talk to the internet beyond your own SMTP
-server. Under Reminders → **Sharing**, enter the other person's email to send
+**same computer** (e.g. a family member with their own login). That share is
+not the multi-device sync described under cloud backup. Under Reminders →
+**Sharing**, enter the other person's email to send
 them an invite code (via the SMTP settings above). They register their own
 account (or log in if they already have one) and redeem the code — from then
 on their account sees and manages the same license storage as yours.
@@ -126,11 +145,24 @@ safety net, but the on-screen copy is the one to actually keep. **Without
 this key, not even Perpetua can decrypt your cloud backup.**
 
 Use **Back up to cloud now** any time you want a fresh snapshot uploaded.
-Perpetua doesn't keep a history in the cloud — each sync replaces the
+Perpetua doesn't keep a history in the cloud — each upload replaces the
 previous one — so this is a disaster-recovery copy, not a version history.
 Uploads are written to a temporary name and verified by reading them back
 before replacing the previous copy, so a dropped connection can't leave you
-with a half-written backup.
+with a half-written backup. A failed upload is logged and does not erase the
+previous good copy.
+
+**Scheduled upload** is off unless you turn it on and pick 6 hours, 12 hours,
+24 hours, or 7 days. It uses that same upload. It is not live sync.
+
+**Sync with another computer** is the path for two machines that already
+share this cloud backup. Perpetua compares vault timestamps. If this
+computer is newer, it uploads. If the cloud copy is strictly newer, it
+downloads and replaces the local vault (a pre-restore snapshot is kept).
+If the timestamps match, nothing is replaced. That is last-write-wins by
+backup timestamp, not a live shared session. A wrong recovery key stops the
+sync and leaves the local vault unchanged. A newer local vault is never
+replaced silently.
 
 Re-saving the WebDAV settings (a new app password, say) keeps your existing
 recovery key; leave the password blank to keep the stored one. Tick
@@ -161,8 +193,13 @@ folder's own README for setup).
 To pair it: open **Vault tools → Browser extension → Reveal token for
 extension**, copy the token shown, and paste it into the extension's
 Options page. Treat it like a password — it's a real 30-day Perpetua
-session credential. If syncing stops working after a while, sign back
-into Perpetua and copy a fresh one.
+session credential. **Revoke extension token** invalidates that copy
+immediately. Perpetua stays signed in and shows a new session token.
+Changing your password also invalidates older tokens.
+
+Visit-based keep-alive (above) stays off until you enable it in Perpetua
+and in the extension. Only a matching hostname is sent, and only to
+Perpetua on this computer.
 
 ## Upgrading to Pro
 
@@ -170,6 +207,30 @@ The free tier stores up to 3 licenses. Pro is a single purchase: pay once and
 the license cap stays off. It is not a subscription, and it does not include
 a lifetime support plan. **Unlock unlimited** opens a Polar checkout when this
 build has a checkout link, or you can activate an offline license key.
+
+## Updates
+
+**Help → Check for Updates** looks at whether this build can install a
+GitHub Release. Right now the updater public key is not set, so the check
+says updates are not configured and does not download anything. The owner
+has to generate a Tauri updater keypair, put the public key in
+`desktop/src-tauri/tauri.conf.json` (`plugins.updater.pubkey`), set
+`bundle.createUpdaterArtifacts` to true, and store the private key as the
+GitHub Actions secrets `TAURI_SIGNING_PRIVATE_KEY` and
+`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The private key is not in this
+repository. The manifest URL is
+`https://github.com/Hammurabi-Ramji/PERPETUA/releases/latest/download/latest.json`.
+
+## On disk
+
+The license database on this computer is still a normal SQLite file. It is
+not encrypted at rest in this build: compiling SQLCipher needs a Perl that
+can load `Locale::Maketext::Simple`, and the Perl shipped with Git for
+Windows cannot. SMTP passwords, WebDAV passwords, the cloud recovery key,
+and Auto-Maintain vendor passwords are in the OS credential store instead.
+Disk encryption (BitLocker, FileVault, or LUKS) is still the right extra
+layer. Even a future encrypted vault would not stop malware running as the
+same user.
 
 ## Troubleshooting
 
