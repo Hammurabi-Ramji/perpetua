@@ -4,6 +4,7 @@
 	import {
 		getAccountRecovery,
 		dismissReminder,
+		getActivityInference,
 		getReminderSettings,
 		inviteMember,
 		listReminderItems,
@@ -11,6 +12,7 @@
 		snoozeReminder,
 		redeemInvite,
 		sendTestRecoveryEmail,
+		setActivityInference,
 		updateAccountRecovery,
 		updateReminderSettings
 	} from '$lib/api';
@@ -18,9 +20,28 @@
 	import { entitlement, refreshEntitlement } from '$lib/stores/entitlement';
 	import type { AccountRecoverySettings, ReminderItem, ReminderSettings, VaultMember } from '$lib/types';
 
+	let activityInference = false;
+	let activityBusy = false;
 	let snoozeHours = '24';
 	let muteBusy = '';
 	let loading = true;
+
+	async function saveActivityInference(event: Event) {
+		const enabled = (event.currentTarget as HTMLInputElement).checked;
+		activityBusy = true;
+		error = null;
+		try {
+			activityInference = (await setActivityInference(enabled)).enabled;
+			successMessage = enabled
+				? 'Activity inference is on. A visit to a matching hostname can reset that license the same way Mark as used does. Only the date is stored.'
+				: 'Activity inference is off. Keep-alive clocks change only when you use Mark as used.';
+		} catch (activityError) {
+			activityInference = !enabled;
+			error = activityError instanceof Error ? activityError.message : 'Could not update activity inference';
+		} finally {
+			activityBusy = false;
+		}
+	}
 
 	async function snoozeItem(item: ReminderItem) {
 		muteBusy = `${item.license_id}:${item.kind}:snooze`;
@@ -163,6 +184,7 @@
 			};
 			items = reminderItems;
 			recovery = toRecoveryForm(recoveryLoaded);
+			activityInference = (await getActivityInference()).enabled;
 			await Promise.all([refreshEntitlement(), loadLaunchAtLogin()]);
 			if ($entitlement?.pro) {
 				members = await listVaultMembers();
@@ -358,6 +380,22 @@
 				<input bind:checked={settings.browser_notifications} type="checkbox" />
 				<span>Desktop reminders</span>
 			</label>
+
+			<label class="checkbox">
+				<input
+					type="checkbox"
+					checked={activityInference}
+					disabled={activityBusy}
+					on:change={saveActivityInference}
+				/>
+				<span>Reset keep-alive when I visit a matching site</span>
+			</label>
+			<p class="muted small">
+				Off by default. When this is on, the browser extension can tell Perpetua that you opened a
+				hostname matching one of your licenses. Perpetua stores only the same date Mark as used
+				stores — not the page address, title, or anything from an inbox. Mark as used stays on the
+				license and remains the default.
+			</p>
 
 			<p class="muted small">
 				Every few hours Perpetua checks for expiries, action deadlines and keep-alive windows and

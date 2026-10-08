@@ -54,6 +54,17 @@ async function getLicenses() {
   return authenticatedFetch('/licenses');
 }
 
+async function getActivityHosts() {
+  return authenticatedFetch('/activity/hosts');
+}
+
+async function reportHostVisit(host) {
+  return authenticatedFetch('/activity/visit', {
+    method: 'POST',
+    body: JSON.stringify({ host }),
+  });
+}
+
 async function checkHealth(apiBase) {
   const response = await fetch(`${apiBase || DEFAULT_API_BASE}/api/health`);
   return response.ok;

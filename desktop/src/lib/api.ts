@@ -286,6 +286,17 @@ export function updateReminderSettings(input: ReminderSettings) {
   });
 }
 
+export function getActivityInference() {
+  return request<{ enabled: boolean }>("/activity/settings");
+}
+
+export function setActivityInference(enabled: boolean) {
+  return request<{ enabled: boolean }>("/activity/settings", {
+    method: "PATCH",
+    body: JSON.stringify({ enabled }),
+  });
+}
+
 export function listReminderItems() {
   return request<ReminderItem[]>("/reminders/items");
 }

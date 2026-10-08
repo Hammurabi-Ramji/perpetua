@@ -239,6 +239,12 @@ pub fn apply_schema(conn: &Connection) -> Result<()> {
         "ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0",
         [],
     );
+    // Opt-in keep-alive reset when the browser extension sees a matching hostname.
+    // Off by default: Mark as used stays the way a clock is reset.
+    let _ = conn.execute(
+        "ALTER TABLE users ADD COLUMN activity_inference INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
     // Pending invites now expire (see prepare_invite). redeem_invite requires
     // expires_at to be set and in the future, so any pre-migration invite rows
     // (NULL expires_at) simply can no longer be redeemed — fail closed rather

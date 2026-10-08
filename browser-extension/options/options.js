@@ -6,13 +6,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     'apiBase',
     'apiToken',
     'autoSync',
-    'notifyOnNewLicenses'
+    'notifyOnNewLicenses',
+    'activityInference'
   ]);
 
   document.getElementById('apiBase').value = settings.apiBase || 'http://127.0.0.1:18765';
   document.getElementById('apiToken').value = settings.apiToken || '';
   document.getElementById('autoSync').checked = settings.autoSync !== false;
   document.getElementById('notifyOnNewLicenses').checked = settings.notifyOnNewLicenses !== false;
+  document.getElementById('activityInference').checked = settings.activityInference === true;
 
   document.getElementById('settings-form').addEventListener('submit', saveSettings);
   document.getElementById('clear-token-button').addEventListener('click', clearToken);
@@ -58,8 +60,28 @@ async function saveSettings(e) {
     apiBase,
     apiToken: document.getElementById('apiToken').value.trim(),
     autoSync: document.getElementById('autoSync').checked,
-    notifyOnNewLicenses: document.getElementById('notifyOnNewLicenses').checked
+    notifyOnNewLicenses: document.getElementById('notifyOnNewLicenses').checked,
+    activityInference: document.getElementById('activityInference').checked
   };
+
+  if (settings.activityInference && !settings.apiToken) {
+    showStatus('Paste a Perpetua token before turning on visit-based keep-alive.', 'error');
+    return;
+  }
+  if (settings.apiToken) {
+    const response = await fetch(`${apiBase}/api/activity/settings`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${settings.apiToken}`,
+      },
+      body: JSON.stringify({ enabled: settings.activityInference }),
+    });
+    if (settings.activityInference && !response.ok) {
+      showStatus('Perpetua did not turn on activity inference, so this box was not saved.', 'error');
+      return;
+    }
+  }
 
   try {
     await chrome.storage.local.set(settings);

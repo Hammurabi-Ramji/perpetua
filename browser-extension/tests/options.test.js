@@ -57,7 +57,8 @@ describe('browser extension options', () => {
       apiBase: 'http://127.0.0.1:18765',
       apiToken: 'new-token',
       autoSync: true,
-      notifyOnNewLicenses: true
+      notifyOnNewLicenses: true,
+      activityInference: false
     });
   });
 

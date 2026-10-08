@@ -122,6 +122,12 @@ pub(crate) fn build_router(db: Arc<Mutex<Connection>>, jwt_secret: Arc<String>) 
             get(get_single_license).patch(update_single_license).delete(delete_single_license),
         )
         .route("/api/licenses/:id/active", post(mark_active_route))
+        .route(
+            "/api/activity/settings",
+            get(get_activity_settings_route).patch(update_activity_settings_route),
+        )
+        .route("/api/activity/hosts", get(activity_hosts_route))
+        .route("/api/activity/visit", post(activity_visit_route))
         .route("/api/sites/connections", get(get_site_connections))
         .route("/api/sites", post(create_site_route))
         .route("/api/sites/:id/connect", post(connect_site_route))
@@ -1098,6 +1104,86 @@ async fn dismiss_reminder_route(
     match dismiss_reminder(&conn, owner_id, payload.license_id, &payload.kind, &payload.due_date) {
         Ok(()) => success(json!({ "dismissed": true })),
         Err(error) => failure(StatusCode::BAD_REQUEST, &error.to_string()),
+    }
+}
+
+#[derive(Deserialize)]
+struct ActivitySettingsUpdate {
+    enabled: bool,
+}
+
+#[derive(Deserialize)]
+struct ActivityVisitRequest {
+    host: String,
+}
+
+async fn get_activity_settings_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+    let conn = db.lock().await;
+    match crate::activity::activity_inference_enabled(&conn, user.id) {
+        Ok(enabled) => success(json!({ "enabled": enabled })),
+        Err(_) => failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to read activity settings"),
+    }
+}
+
+async fn update_activity_settings_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+    Json(payload): Json<ActivitySettingsUpdate>,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+    let conn = db.lock().await;
+    match crate::activity::set_activity_inference(&conn, user.id, payload.enabled) {
+        Ok(enabled) => success(json!({ "enabled": enabled })),
+        Err(error) => failure(StatusCode::BAD_REQUEST, &error.to_string()),
+    }
+}
+
+async fn activity_hosts_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+    let conn = db.lock().await;
+    let owner_id = match resolved_owner(&conn, &user) {
+        Ok(id) => id,
+        Err(error) => return error,
+    };
+    match crate::activity::tracked_hosts(&conn, user.id, owner_id) {
+        Ok(hosts) => success(json!({ "hosts": hosts })),
+        Err(_) => failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to list tracked hosts"),
+    }
+}
+
+async fn activity_visit_route(
+    State((db, jwt_secret)): State<(DbState, Arc<String>)>,
+    headers: HeaderMap,
+    Json(payload): Json<ActivityVisitRequest>,
+) -> Response {
+    let user = match authorized_user(&headers, &db, jwt_secret.as_str()).await {
+        Ok(user) => user,
+        Err(error) => return error,
+    };
+    let conn = db.lock().await;
+    let owner_id = match resolved_owner(&conn, &user) {
+        Ok(id) => id,
+        Err(error) => return error,
+    };
+    match crate::activity::record_host_visit(&conn, user.id, owner_id, &payload.host) {
+        Ok(updated) => success(json!({ "updated": updated })),
+        Err(error) => failure(StatusCode::FORBIDDEN, &error.to_string()),
     }
 }
 

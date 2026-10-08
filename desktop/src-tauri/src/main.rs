@@ -15,6 +15,7 @@ struct AppState {
     jwt_secret: Arc<String>,
 }
 
+mod activity;
 mod api;
 mod cloud_backup;
 mod database;

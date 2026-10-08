@@ -806,6 +806,72 @@ fn password_reset_round_trip_requires_backup_email_and_smtp() {
 }
 
 #[test]
+fn activity_visit_resets_keepalive_only_when_opted_in_and_stores_no_host() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let user = create_user(&conn, "visit@example.com", "password123").expect("user");
+    let stale = (chrono::Utc::now().date_naive() - chrono::Duration::days(20))
+        .format("%Y-%m-%d")
+        .to_string();
+    let license = add_license(
+        &conn,
+        user.id,
+        LicensePayload {
+            product_url: Some("https://vendor.test/login".to_string()),
+            redemption_url: None,
+            download_url: None,
+            keepalive_days: Some(30),
+            last_active: Some(stale.clone()),
+            ..sample_license("Vendor Tool", None)
+        },
+    )
+    .expect("license");
+
+    let refused = crate::activity::record_host_visit(&conn, user.id, user.id, "vendor.test");
+    assert!(refused.is_err());
+    let unchanged = get_license_by_id(&conn, user.id, license.id).expect("fetch").expect("row");
+    assert_eq!(unchanged.last_active.as_deref(), Some(stale.as_str()));
+
+    assert!(crate::activity::set_activity_inference(&conn, user.id, true).expect("opt in"));
+    let hosts = crate::activity::tracked_hosts(&conn, user.id, user.id).expect("hosts");
+    assert_eq!(hosts, vec!["vendor.test".to_string()]);
+
+    let missed = crate::activity::record_host_visit(&conn, user.id, user.id, "other.test").expect("miss");
+    assert!(missed.is_empty());
+    assert_eq!(
+        get_license_by_id(&conn, user.id, license.id)
+            .expect("fetch")
+            .expect("row")
+            .last_active
+            .as_deref(),
+        Some(stale.as_str())
+    );
+
+    let updated = crate::activity::record_host_visit(&conn, user.id, user.id, "https://app.vendor.test/secret-path")
+        .expect("visit");
+    assert_eq!(updated, vec![license.id]);
+    let today = crate::services::today_local().format("%Y-%m-%d").to_string();
+    assert_eq!(
+        get_license_by_id(&conn, user.id, license.id)
+            .expect("fetch")
+            .expect("row")
+            .last_active
+            .as_deref(),
+        Some(today.as_str())
+    );
+
+    drop(conn);
+    let bytes = std::fs::read(db_path_at(temp.path()).expect("db path")).expect("read db");
+    let raw = String::from_utf8_lossy(&bytes);
+    assert!(!raw.contains("app.vendor.test"), "visit hostname must not be stored");
+    assert!(!raw.contains("secret-path"), "visit path must not be stored");
+
+    let conn = init_db_at(temp.path()).expect("reopen");
+    let marked = mark_license_active(&conn, user.id, license.id).expect("manual").expect("row");
+    assert_eq!(marked.last_active.as_deref(), Some(today.as_str()));
+}
+
+#[test]
 fn snooze_and_dismiss_hide_one_occurrence_and_mark_used_still_resets() {
     let temp = tempdir().expect("temp dir");
     let conn = init_db_at(temp.path()).expect("db");
