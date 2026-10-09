@@ -65,16 +65,63 @@ fn dataset() -> &'static VendorPolicyDataset {
     DATASET.get_or_init(load_dataset)
 }
 
-fn normalize(value: &str) -> String {
+/// Split into lowercase alphanumeric tokens. Any non-alphanumeric character
+/// (space, dot, hyphen, slash...) is a token boundary, so "appsumo.com"
+/// becomes ["appsumo", "com"].
+fn tokenize(value: &str) -> Vec<String> {
     value
-        .trim()
         .to_lowercase()
         .chars()
-        .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+        .map(|c| if c.is_alphanumeric() { c } else { ' ' })
         .collect::<String>()
         .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+        .map(str::to_string)
+        .collect()
+}
+
+const TLD_SUFFIXES: [&str; 3] = ["com", "net", "io"];
+
+/// True when `needle` occurs in `hay` as a contiguous run of whole tokens.
+fn contains_token_seq(hay: &[String], needle: &[String]) -> bool {
+    !needle.is_empty()
+        && needle.len() <= hay.len()
+        && hay.windows(needle.len()).any(|w| w == needle)
+}
+
+/// Candidate token forms of a site string: as given, without a trailing
+/// "com"/"net"/"io" token ("appsumo.com"), and without a glued TLD suffix on
+/// the last token ("appsumocom").
+fn site_variants(tokens: &[String]) -> Vec<Vec<String>> {
+    let mut out = vec![tokens.to_vec()];
+    if let Some(last) = tokens.last() {
+        if tokens.len() > 1 && TLD_SUFFIXES.contains(&last.as_str()) {
+            out.push(tokens[..tokens.len() - 1].to_vec());
+        }
+        for tld in TLD_SUFFIXES {
+            if let Some(stem) = last.strip_suffix(tld) {
+                if !stem.is_empty() {
+                    let mut v = tokens[..tokens.len() - 1].to_vec();
+                    v.push(stem.to_string());
+                    out.push(v);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Word-boundary alias match: the site equals the alias, or contains it as a
+/// whole token sequence. Space-insensitive equality also lets "App Sumo" match
+/// the alias "appsumo". No partial-word substring matching.
+fn alias_matches(site_tokens: &[String], alias: &str) -> bool {
+    let alias_tokens = tokenize(alias);
+    if alias_tokens.is_empty() {
+        return false;
+    }
+    let alias_compact = alias_tokens.concat();
+    site_variants(site_tokens).iter().any(|v| {
+        contains_token_seq(v, &alias_tokens) || v.concat() == alias_compact
+    })
 }
 
 /// Match against aliases (source_site) first, then product_name hints.
@@ -83,8 +130,8 @@ pub fn suggest_keepalive(
     product_name: Option<&str>,
 ) -> VendorPolicySuggestion {
     let data = dataset();
-    let site = source_site.map(normalize).unwrap_or_default();
-    let product = product_name.map(normalize).unwrap_or_default();
+    let site = source_site.map(tokenize).unwrap_or_default();
+    let product = product_name.map(tokenize).unwrap_or_default();
 
     if site.is_empty() && product.is_empty() {
         return VendorPolicySuggestion {
@@ -103,9 +150,8 @@ pub fn suggest_keepalive(
     // Prefer exact/alias match on source_site.
     if !site.is_empty() {
         for policy in &data.policies {
-            let aliases: Vec<String> = policy.aliases.iter().map(|a| normalize(a)).collect();
-            if aliases.iter().any(|a| a == &site || site.contains(a) || a.contains(&site))
-                && policy.id != "generic-saas-90"
+            if policy.id != "generic-saas-90"
+                && policy.aliases.iter().any(|a| alias_matches(&site, a))
             {
                 return suggestion_from(policy, data.version);
             }
@@ -116,8 +162,8 @@ pub fn suggest_keepalive(
     if !product.is_empty() {
         for policy in &data.policies {
             for hint in &policy.product_hints {
-                let h = normalize(hint);
-                if !h.is_empty() && product.contains(&h) {
+                let h = tokenize(hint);
+                if contains_token_seq(&product, &h) {
                     return suggestion_from(policy, data.version);
                 }
             }
@@ -195,5 +241,28 @@ mod tests {
         let s = suggest_keepalive(None, Some("Cool LTD Lifetime Suite"));
         assert!(s.matched);
         assert_eq!(s.keepalive_days, Some(90));
+    }
+
+    #[test]
+    fn appsumo_spellings_match() {
+        for site in ["AppSumo", "appsumo.com", "App Sumo", "www.appsumo.com", "appsumocom"] {
+            let s = suggest_keepalive(Some(site), None);
+            assert!(s.matched, "{site} should match");
+            assert_eq!(s.policy_id.as_deref(), Some("appsumo"), "{site}");
+        }
+    }
+
+    #[test]
+    fn partial_word_sites_do_not_match() {
+        for site in ["Sumo Logic", "Graphic Design Co", "Dolphin"] {
+            let s = suggest_keepalive(Some(site), None);
+            assert!(!s.matched, "{site} should not match");
+        }
+    }
+
+    #[test]
+    fn product_hint_requires_word_boundary() {
+        assert!(!suggest_keepalive(None, Some("Multilifetimes Suite")).matched);
+        assert!(!suggest_keepalive(None, Some("Gold Ltdx")).matched);
     }
 }

@@ -6,7 +6,7 @@
     {
       "id": "appsumo",
       "vendor": "AppSumo",
-      "aliases": ["appsumo", "app sumo", "sumo"],
+      "aliases": ["appsumo", "app sumo"],
       "product_hints": [],
       "keepalive_days": 90,
       "source": "AppSumo marketplace guidance / deal page keep-alive notes (community-verified)",
@@ -36,7 +36,7 @@
     {
       "id": "producthunt",
       "vendor": "Product Hunt",
-      "aliases": ["producthunt", "product hunt", "ph"],
+      "aliases": ["producthunt", "product hunt"],
       "product_hints": [],
       "keepalive_days": 90,
       "source": "Deal / lifetime offer common practice (conservative)",
