@@ -24,6 +24,8 @@ import type {
 const API_PORT = import.meta.env.VITE_PERPETUA_API_PORT || "18765";
 const API_BASE_URL = `http://127.0.0.1:${API_PORT}/api`;
 const TOKEN_KEY = "perpetua.auth.token";
+const REQUEST_TIMEOUT_MS = 30_000;
+const CLOUD_REQUEST_TIMEOUT_MS = 120_000;
 
 type ApiEnvelope<T> = {
   success: boolean;
@@ -76,6 +78,14 @@ export function normalizeLicenseInput(input: LicenseInput) {
   };
 }
 
+function isAbortError(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { name?: string }).name === "AbortError"
+  );
+}
+
 async function request<T>(path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
   const token = getStoredToken();
@@ -88,13 +98,34 @@ async function request<T>(path: string, init: RequestInit = {}) {
     headers.set("Authorization", `Bearer ${token}`);
   }
 
+  // Don't let a hung local service (or a stalled WebDAV round trip behind it)
+  // leave the UI waiting forever. Cloud-backup calls do real network I/O.
+  const timeoutMs = path.startsWith("/cloud-backup")
+    ? CLOUD_REQUEST_TIMEOUT_MS
+    : REQUEST_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
   let response: Response;
+  let payload: ApiEnvelope<T> | null = null;
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
       ...init,
       headers,
+      signal: controller.signal,
     });
-  } catch {
+    try {
+      payload = (await response.json()) as ApiEnvelope<T>;
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw error;
+      }
+      payload = null;
+    }
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw new ApiError("Request timed out", 0);
+    }
     // fetch() itself threw — the backend is unreachable (not running, or a
     // network-level failure), not just an error response. Give a clear,
     // actionable message instead of leaking a raw "Failed to fetch".
@@ -102,13 +133,8 @@ async function request<T>(path: string, init: RequestInit = {}) {
       "Can't reach Perpetua's local service. Try restarting the app.",
       0,
     );
-  }
-
-  let payload: ApiEnvelope<T> | null = null;
-  try {
-    payload = (await response.json()) as ApiEnvelope<T>;
-  } catch {
-    payload = null;
+  } finally {
+    clearTimeout(timer);
   }
 
   if (!response.ok || payload?.success === false) {

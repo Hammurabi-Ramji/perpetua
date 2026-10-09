@@ -46,7 +46,11 @@ pub struct PolarActivation {
 /// Reserve a device activation for `key` against the configured Polar org.
 /// A 200 means the key exists and a slot was granted.
 pub async fn activate(key: &str, label: &str) -> Result<PolarActivation> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|error| anyhow!("Failed to build HTTP client: {error}"))?;
     let response = client
         .post(format!(
             "{POLAR_API_BASE}/v1/customer-portal/license-keys/activate"

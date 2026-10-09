@@ -1,6 +1,7 @@
 use axum::{
-    extract::{Extension, Path, Query, State},
+    extract::{Extension, Path, Query, Request, State},
     http::{header, HeaderMap, HeaderValue, Method, StatusCode},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
@@ -141,7 +142,43 @@ pub(crate) fn build_router(db: Arc<Mutex<Connection>>, jwt_secret: Arc<String>) 
         .layer(Extension(auth_limiter))
         .layer(Extension(sharing_limiter))
         .layer(webview_cors_layer())
+        // Outermost: reject DNS-rebinding requests before anything else runs.
+        .layer(middleware::from_fn(host_guard))
         .with_state((db, jwt_secret))
+}
+
+/// DNS-rebinding defense (SEC-03). The API only listens on loopback, but a
+/// malicious page can point its own hostname at 127.0.0.1 and then talk to us
+/// same-origin, bypassing CORS. Such requests carry the attacker's hostname in
+/// the `Host` header, so only loopback host names with our port are served.
+/// A request with no `Host` header at all (in-process `oneshot` tests,
+/// HTTP/1.0 clients) is let through. Under `cfg(test)` any port is accepted
+/// since the tests don't bind the real API port.
+async fn host_guard(req: Request, next: Next) -> Response {
+    if let Some(value) = req.headers().get(header::HOST) {
+        let allowed = value
+            .to_str()
+            .map(|host| host_allowed(host, api_port(), cfg!(test)))
+            .unwrap_or(false);
+        if !allowed {
+            return failure(StatusCode::MISDIRECTED_REQUEST, "Unrecognized Host header.");
+        }
+    }
+    next.run(req).await
+}
+
+fn host_allowed(host: &str, port: u16, any_port: bool) -> bool {
+    let host = host.trim().to_ascii_lowercase();
+    let Some((name, host_port)) = host.rsplit_once(':') else {
+        return false;
+    };
+    if !matches!(name, "127.0.0.1" | "localhost" | "[::1]") {
+        return false;
+    }
+    match host_port.parse::<u16>() {
+        Ok(parsed) => any_port || parsed == port,
+        Err(_) => false,
+    }
 }
 
 /// This server binds to 127.0.0.1 and is reachable from any page open in any

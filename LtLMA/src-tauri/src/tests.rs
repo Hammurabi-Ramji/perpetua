@@ -1036,3 +1036,56 @@ async fn restore_route_requires_confirm_when_users_exist() {
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
+
+fn host_request(host: &str) -> Request<Body> {
+    Request::builder()
+        .uri("/api/health")
+        .method("GET")
+        .header("host", host)
+        .body(Body::empty())
+        .expect("request")
+}
+
+#[tokio::test]
+async fn host_guard_rejects_foreign_host_with_421() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let router = build_router(Arc::new(Mutex::new(conn)), Arc::new("test-secret".to_string()));
+
+    for host in ["evil.example.com", "evil.example.com:18765", "127.0.0.1.evil.com:18765", "localhost"] {
+        let response = router.clone().oneshot(host_request(host)).await.expect("response");
+        assert_eq!(response.status(), StatusCode::MISDIRECTED_REQUEST, "host {host}");
+    }
+}
+
+#[tokio::test]
+async fn host_guard_allows_loopback_hosts_and_missing_host() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let router = build_router(Arc::new(Mutex::new(conn)), Arc::new("test-secret".to_string()));
+
+    for host in ["localhost:18765", "127.0.0.1:18765", "[::1]:18765", "LOCALHOST:18765"] {
+        let response = router.clone().oneshot(host_request(host)).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK, "host {host}");
+    }
+
+    // No Host header at all (plain oneshot) must still pass.
+    let response = router
+        .oneshot(http("GET", "/api/health", None, None))
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[test]
+fn webdav_scheme_check_requires_https_except_loopback() {
+    use crate::cloud_backup::check_webdav_scheme;
+    assert!(check_webdav_scheme("http://example.com").is_err());
+    assert!(check_webdav_scheme("http://127.0.0.1@evil.com/x").is_err());
+    assert!(check_webdav_scheme("ftp://example.com").is_err());
+    assert!(check_webdav_scheme("example.com/dav").is_err());
+    assert!(check_webdav_scheme("http://127.0.0.1:1234").is_ok());
+    assert!(check_webdav_scheme("http://localhost/dav").is_ok());
+    assert!(check_webdav_scheme("http://[::1]:8080/dav").is_ok());
+    assert!(check_webdav_scheme("https://x").is_ok());
+}

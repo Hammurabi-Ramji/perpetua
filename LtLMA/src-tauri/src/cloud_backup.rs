@@ -81,8 +81,41 @@ pub struct WebDavTarget<'a> {
     pub remote_path: &'a str,
 }
 
+/// Hard cap on a downloaded cloud backup (REL-14): refuses to buffer an
+/// unbounded response from a misbehaving or hostile server.
+const MAX_DOWNLOAD_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Rejects WebDAV URLs that would send Basic-auth credentials and the
+/// (encrypted) backup over cleartext HTTP. `https` is always fine; plain
+/// `http` is allowed only for loopback hosts (local test servers).
+pub(crate) fn check_webdav_scheme(url: &str) -> Result<()> {
+    let url = url.trim();
+    let lower = url.to_ascii_lowercase();
+    if lower.starts_with("https://") {
+        return Ok(());
+    }
+    if let Some(rest) = lower.strip_prefix("http://") {
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+        // Drop any userinfo ("user:pass@") so "127.0.0.1@evil.com" can't pass.
+        let host_port = authority.rsplit('@').next().unwrap_or("");
+        let host = if host_port.starts_with('[') {
+            host_port.split(']').next().map(|h| format!("{h}]")).unwrap_or_default()
+        } else {
+            host_port.split(':').next().unwrap_or("").to_string()
+        };
+        if matches!(host.as_str(), "localhost" | "127.0.0.1" | "[::1]") {
+            return Ok(());
+        }
+    }
+    Err(anyhow!(
+        "WebDAV server URL must use https:// (plain http:// is only allowed for localhost)."
+    ))
+}
+
 fn client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(60))
         .build()
         .map_err(|err| anyhow!("Failed to build HTTP client: {err}"))
 }
@@ -115,6 +148,7 @@ async fn ensure_remote_folder(target: &WebDavTarget<'_>) -> Result<()> {
 /// Encrypts-then-uploads the current backup to the fixed remote object name,
 /// overwriting whatever was there before.
 pub async fn upload(target: &WebDavTarget<'_>, recovery_key_b64: &str, plaintext: &[u8]) -> Result<()> {
+    check_webdav_scheme(target.base_url)?;
     ensure_remote_folder(target).await?;
     let encrypted = encrypt(recovery_key_b64, plaintext)?;
 
@@ -134,6 +168,7 @@ pub async fn upload(target: &WebDavTarget<'_>, recovery_key_b64: &str, plaintext
 
 /// Downloads and decrypts the current cloud backup.
 pub async fn download(target: &WebDavTarget<'_>, recovery_key_b64: &str) -> Result<Vec<u8>> {
+    check_webdav_scheme(target.base_url)?;
     let response = client()?
         .get(object_url(target, BACKUP_OBJECT_NAME))
         .basic_auth(target.username, Some(target.password))
@@ -145,10 +180,17 @@ pub async fn download(target: &WebDavTarget<'_>, recovery_key_b64: &str) -> Resu
         return Err(anyhow!("WebDAV server returned {} — no backup found at this location?", response.status()));
     }
 
+    if response.content_length().is_some_and(|len| len > MAX_DOWNLOAD_BYTES) {
+        return Err(anyhow!("Cloud backup is larger than the 256 MiB limit."));
+    }
+
     let encrypted = response
         .bytes()
         .await
         .map_err(|err| anyhow!("Failed reading WebDAV response body: {err}"))?;
+    if encrypted.len() as u64 > MAX_DOWNLOAD_BYTES {
+        return Err(anyhow!("Cloud backup is larger than the 256 MiB limit."));
+    }
 
     decrypt(recovery_key_b64, &encrypted)
 }
