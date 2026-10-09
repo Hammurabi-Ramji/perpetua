@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { entitlement, openPaywall } from '$lib/stores/entitlement';
+	import { entitlement, openPaywall } from '#lib/stores/entitlement';
 
 	$: remaining = $entitlement?.remaining ?? 0;
 </script>

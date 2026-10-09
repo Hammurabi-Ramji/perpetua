@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 
-	import LicenseForm from '$lib/components/LicenseForm.svelte';
-	import PlanBanner from '$lib/components/PlanBanner.svelte';
-	import { createLicense, listLicenses } from '$lib/api';
-	import { handleAddError, refreshEntitlement } from '$lib/stores/entitlement';
-	import { emptyLicense, type License, type LicenseInput } from '$lib/types';
+	import LicenseForm from '#lib/components/LicenseForm.svelte';
+	import PlanBanner from '#lib/components/PlanBanner.svelte';
+	import { createLicense, listLicenses } from '#lib/api';
+	import { handleAddError, refreshEntitlement } from '#lib/stores/entitlement';
+	import { emptyLicense, type License, type LicenseInput } from '#lib/types';
 
 	let licenses: License[] = [];
 	let loading = true;
@@ -63,7 +63,7 @@
 		void loadLicenses();
 		window.addEventListener('perpetua:pro-unlocked', loadLicenses);
 		// "File > Add License" (menu bar) deep-links here to open the form directly.
-		if ($page.url.searchParams.get('new') === '1') {
+		if (page.url.searchParams.get('new') === '1') {
 			showCreate = true;
 		}
 	});
@@ -134,7 +134,7 @@
 					</tr>
 				</thead>
 				<tbody>
-					{#each filteredLicenses as license}
+					{#each filteredLicenses as license (license.id)}
 						<tr>
 							<td>
 								<strong>{license.product_name}</strong>

@@ -1,4 +1,4 @@
-import { browser } from "$app/environment";
+import { browser } from "$app/env";
 import { goto } from "$app/navigation";
 import { writable } from "svelte/store";
 
@@ -10,8 +10,8 @@ import {
   login as loginRequest,
   register as registerRequest,
   storeToken,
-} from "$lib/api";
-import type { User } from "$lib/types";
+} from "#lib/api";
+import type { User } from "#lib/types";
 
 type AuthState = {
   user: User | null;

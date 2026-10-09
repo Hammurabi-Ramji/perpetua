@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { auth } from '$lib/stores/auth';
+	import { auth } from '#lib/stores/auth';
 	import {
 		clearStoredToken,
 		forgotPassword,
 		getVaultStatus,
 		resetPassword,
 		restoreCloudBackup
-	} from '$lib/api';
+	} from '#lib/api';
 
 	let mode: 'login' | 'register' | 'forgot' | 'restore' = 'login';
 	// Pre-login restore is only offered while this install has no vault yet.

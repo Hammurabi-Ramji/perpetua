@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 
-	import LicenseForm from '$lib/components/LicenseForm.svelte';
-	import { deleteLicense, getLicense, markLicenseActive, updateLicense } from '$lib/api';
-	import { buildDossier } from '$lib/dossier';
-	import { emptyLicense, type License, type LicenseInput } from '$lib/types';
+	import LicenseForm from '#lib/components/LicenseForm.svelte';
+	import { deleteLicense, getLicense, markLicenseActive, updateLicense } from '#lib/api';
+	import { buildDossier } from '#lib/dossier';
+	import { emptyLicense, type License, type LicenseInput } from '#lib/types';
 
 	let loading = true;
 	let saving = false;
@@ -20,7 +20,7 @@
 	let form: LicenseInput = emptyLicense();
 
 	function licenseId() {
-		return $page.params.id ?? '';
+		return page.params.id ?? '';
 	}
 
 	function toFormModel(record: License): LicenseInput {

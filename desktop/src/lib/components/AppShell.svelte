@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 
-	import { auth } from '$lib/stores/auth';
+	import { auth } from '#lib/stores/auth';
 
 	const navigation = [
 		{ href: '/', label: 'Dashboard' },
@@ -20,10 +20,10 @@
 	</div>
 
 	<nav class="nav">
-		{#each navigation as item}
+		{#each navigation as item (item.href)}
 			<a
 				href={item.href}
-				class:selected={$page.url.pathname === item.href}
+				class:selected={page.url.pathname === item.href}
 			>
 				{item.label}
 			</a>

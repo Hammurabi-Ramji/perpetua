@@ -1,4 +1,4 @@
-import type { License } from "$lib/types";
+import type { License } from "#lib/types";
 
 // Maps a stored source-site id to a readable marketplace name.
 const MARKETPLACES: Record<string, string> = {

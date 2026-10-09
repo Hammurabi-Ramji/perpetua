@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 
-	import { connectSite, createSite, deleteSite, disconnectSite, listSiteConnections } from '$lib/api';
-	import type { SiteConnection } from '$lib/types';
+	import { connectSite, createSite, deleteSite, disconnectSite, listSiteConnections } from '#lib/api';
+	import type { SiteConnection } from '#lib/types';
 
 	let sites: SiteConnection[] = [];
 	let loading = true;
