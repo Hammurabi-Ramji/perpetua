@@ -2,11 +2,11 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
 
-	import LicenseForm from '$lib/components/LicenseForm.svelte';
-	import PlanBanner from '$lib/components/PlanBanner.svelte';
-	import { createLicense, listLicenses } from '$lib/api';
-	import { handleAddError, refreshEntitlement } from '$lib/stores/entitlement';
-	import { emptyLicense, type License, type LicenseInput } from '$lib/types';
+	import LicenseForm from '#lib/components/LicenseForm.svelte';
+	import PlanBanner from '#lib/components/PlanBanner.svelte';
+	import { createLicense, listLicenses } from '#lib/api';
+	import { handleAddError, refreshEntitlement } from '#lib/stores/entitlement';
+	import { emptyLicense, type License, type LicenseInput } from '#lib/types';
 
 	let licenses: License[] = [];
 	let loading = true;

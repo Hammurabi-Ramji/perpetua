@@ -12,10 +12,10 @@
 		listBackups,
 		restoreCloudBackup,
 		syncCloudBackupNow
-	} from '$lib/api';
-	import { auth } from '$lib/stores/auth';
-	import { entitlement, handleAddError, refreshEntitlement } from '$lib/stores/entitlement';
-	import type { BackupEntry, CloudBackupSettings, ImportLicensesResult } from '$lib/types';
+	} from '#lib/api';
+	import { auth } from '#lib/stores/auth';
+	import { entitlement, handleAddError, refreshEntitlement } from '#lib/stores/entitlement';
+	import type { BackupEntry, CloudBackupSettings, ImportLicensesResult } from '#lib/types';
 
 	let backups: BackupEntry[] = [];
 	let loading = true;

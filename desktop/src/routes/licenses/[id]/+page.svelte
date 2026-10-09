@@ -3,10 +3,10 @@
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
 
-	import LicenseForm from '$lib/components/LicenseForm.svelte';
-	import { deleteLicense, getLicense, markLicenseActive, updateLicense } from '$lib/api';
-	import { buildDossier } from '$lib/dossier';
-	import { emptyLicense, type License, type LicenseInput } from '$lib/types';
+	import LicenseForm from '#lib/components/LicenseForm.svelte';
+	import { deleteLicense, getLicense, markLicenseActive, updateLicense } from '#lib/api';
+	import { buildDossier } from '#lib/dossier';
+	import { emptyLicense, type License, type LicenseInput } from '#lib/types';
 
 	let loading = true;
 	let saving = false;

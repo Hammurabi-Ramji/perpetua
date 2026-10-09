@@ -11,10 +11,10 @@
 		sendTestRecoveryEmail,
 		updateAccountRecovery,
 		updateReminderSettings
-	} from '$lib/api';
-	import { SUPPORT_EMAIL } from '$lib/commerce';
-	import { entitlement, refreshEntitlement } from '$lib/stores/entitlement';
-	import type { AccountRecoverySettings, ReminderItem, ReminderSettings, VaultMember } from '$lib/types';
+	} from '#lib/api';
+	import { SUPPORT_EMAIL } from '#lib/commerce';
+	import { entitlement, refreshEntitlement } from '#lib/stores/entitlement';
+	import type { AccountRecoverySettings, ReminderItem, ReminderSettings, VaultMember } from '#lib/types';
 
 	let loading = true;
 	let saving = false;

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 
-import { buildDossier } from "$lib/dossier";
-import type { License } from "$lib/types";
+import { buildDossier } from "#lib/dossier";
+import type { License } from "#lib/types";
 
 function sample(overrides: Partial<License> = {}): License {
   return {

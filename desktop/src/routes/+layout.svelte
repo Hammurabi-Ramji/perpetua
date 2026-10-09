@@ -4,10 +4,10 @@
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
 
-	import AppShell from '$lib/components/AppShell.svelte';
-	import UpgradeModal from '$lib/components/UpgradeModal.svelte';
-	import { auth } from '$lib/stores/auth';
-	import { refreshEntitlement } from '$lib/stores/entitlement';
+	import AppShell from '#lib/components/AppShell.svelte';
+	import UpgradeModal from '#lib/components/UpgradeModal.svelte';
+	import { auth } from '#lib/stores/auth';
+	import { refreshEntitlement } from '#lib/stores/entitlement';
 
 	let mounted = false;
 

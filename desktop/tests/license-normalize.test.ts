@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 
-import { normalizeLicenseInput } from "$lib/api";
-import { emptyLicense } from "$lib/types";
+import { normalizeLicenseInput } from "#lib/api";
+import { emptyLicense } from "#lib/types";
 
 describe("normalizeLicenseInput", () => {
   it("converts keep-alive days to a number and blanks to null", () => {

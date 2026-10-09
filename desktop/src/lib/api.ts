@@ -19,7 +19,7 @@ import type {
   VaultExportFile,
   VaultMember,
   VaultStatus,
-} from "$lib/types";
+} from "#lib/types";
 
 // Keep in sync with src-tauri DEFAULT_API_PORT (PERPETUA_API_PORT / VITE_PERPETUA_API_PORT).
 // 18765 avoids Windows Hyper-V exclusions on 3000/3001.

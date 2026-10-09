@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { get } from "svelte/store";
 
-import { ApiError } from "$lib/api";
+import { ApiError } from "#lib/api";
 import {
   handleAddError,
   paywallOpen,
   closePaywall,
-} from "$lib/stores/entitlement";
+} from "#lib/stores/entitlement";
 
 describe("handleAddError", () => {
   it("opens the upgrade paywall on a 402 and reports handled", () => {

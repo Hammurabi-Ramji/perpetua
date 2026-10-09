@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 
-	import { auth } from '$lib/stores/auth';
+	import { auth } from '#lib/stores/auth';
 
 	const navigation = [
 		{ href: '/', label: 'Dashboard' },

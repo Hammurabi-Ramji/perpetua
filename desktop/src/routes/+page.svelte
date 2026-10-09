@@ -1,19 +1,19 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 
-	import LicenseForm from '$lib/components/LicenseForm.svelte';
-	import PlanBanner from '$lib/components/PlanBanner.svelte';
-	import StatCard from '$lib/components/StatCard.svelte';
-	import { createLicense, getLicenseStats, listLicenses, listReminderItems } from '$lib/api';
-	import { auth } from '$lib/stores/auth';
-	import { handleAddError, refreshEntitlement } from '$lib/stores/entitlement';
+	import LicenseForm from '#lib/components/LicenseForm.svelte';
+	import PlanBanner from '#lib/components/PlanBanner.svelte';
+	import StatCard from '#lib/components/StatCard.svelte';
+	import { createLicense, getLicenseStats, listLicenses, listReminderItems } from '#lib/api';
+	import { auth } from '#lib/stores/auth';
+	import { handleAddError, refreshEntitlement } from '#lib/stores/entitlement';
 	import {
 		emptyLicense,
 		type License,
 		type LicenseInput,
 		type LicenseStats,
 		type ReminderItem
-	} from '$lib/types';
+	} from '#lib/types';
 
 	let loading = true;
 	let saving = false;

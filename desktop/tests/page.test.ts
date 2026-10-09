@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("$lib/stores/auth", () => ({
+vi.mock("#lib/stores/auth", () => ({
   auth: {
     subscribe: (
       run: (value: { loading: boolean; error: string | null }) => void,

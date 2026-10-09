@@ -30,18 +30,39 @@ the `unic-*` crates (transitive, via Tauri's build tooling); unsound `anyhow`,
 | `browser-extension/` | 0 | 9 -> 3 (2 critical, 1 moderate) |
 | `polar-webhook/` | 0 | 4 -> 3 (high) |
 
-`npm audit fix --force` was then tried on all three (2026-10-07):
+A framework migration then cleared the `desktop/` dev advisories (2026-10-08):
 
-- `browser-extension/`: vitest 3 -> 5 clears everything (0 advisories); tests
-  19/19. **Kept.**
-- `desktop/`: **rejected.** It jumps Svelte 4 -> 5, SvelteKit 2 -> 3, Vite 5 ->
-  8 and `vite build` fails (`svelte.config.js` is no longer read in SvelteKit
-  3). It would also still leave 18 dev advisories. Treat it as a planned
-  framework migration, not an audit fix. Dev-only advisories remain (34), none
-  in production dependencies or in anything shipped.
-- `polar-webhook/`: **rejected.** `--force` rewrote `wrangler` to `^4.15.2`
-  (a downgrade of the declared range) and still left 6 dev advisories (miniflare
-  / `ws`, dev tooling only). Revisit when a newer `wrangler` patches them.
+- Svelte 4 -> 5, SvelteKit 2 -> 3, `@sveltejs/adapter-static` 3 -> 4,
+  `@sveltejs/vite-plugin-svelte` 3 -> 7, Vite 5 -> 8, Vitest 3 -> 5, TypeScript
+  5.9 -> 6, ESLint 8 -> 9, `typescript-eslint` 6 -> 8, `eslint-plugin-svelte`
+  2 -> 3, `svelte-check` 3 -> 4, `cspell` 10.3.
+- SvelteKit 3 changes made along the way: configuration moved from
+  `svelte.config.js` into the `sveltekit()` plugin in `vite.config.ts`
+  (flattened, no `kit` namespace); `$lib` imports became `#lib` subpath imports
+  (`package.json` `imports`); `tsconfig.json` extends `$app/tsconfig`;
+  `.eslintrc.cjs`/`.eslintignore` became `eslint.config.js`.
+- Tests: `svelteTesting()` Vite plugin; `component.$on` replaced by the `events`
+  mount option; `vault.test.ts` loads Testing Library after `vi.resetModules()`
+  so the page and renderer share one Svelte runtime.
+- Result: `desktop/` 41 -> 9 dev advisories, 0 production.
+
+The 9 left are all in `markdownlint-cli2@0.23.3` (its latest release): `braces`
+3.0.3 (no patched release exists; the advisory covers the newest 3.x),
+`micromatch`, `fast-glob`, `globby`, `smol-toml`, `katex` and friends. They are a
+denial-of-service risk when linting markdown, and only on a developer machine.
+Replace or drop the markdown linter if the noise matters.
+
+`browser-extension/`: vitest 3 -> 5 clears everything (0 advisories); tests
+19/19.
+
+`polar-webhook/`: `npm audit fix --force` was **rejected**. It rewrote `wrangler`
+to `^4.15.2` (a downgrade of the declared range) and still left 6 dev advisories
+(miniflare / `ws`, dev tooling only). Revisit when a newer `wrangler` patches
+them.
+
+**Not verified:** the Playwright E2E suite (`desktop/e2e`) and a visual check of
+the packaged app under Svelte 5 were not run. Unit/component tests, `svelte-check`,
+ESLint and the production build all pass.
 
 ## Known test-environment issue (not a dependency problem)
 

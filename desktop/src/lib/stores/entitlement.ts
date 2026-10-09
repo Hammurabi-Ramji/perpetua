@@ -1,7 +1,7 @@
 import { writable } from "svelte/store";
 
-import { ApiError, getEntitlement } from "$lib/api";
-import type { Entitlement } from "$lib/types";
+import { ApiError, getEntitlement } from "#lib/api";
+import type { Entitlement } from "#lib/types";
 
 // Shared entitlement state so the plan banner and the upgrade paywall stay in
 // sync across every page (dashboard, licenses, vault import).
