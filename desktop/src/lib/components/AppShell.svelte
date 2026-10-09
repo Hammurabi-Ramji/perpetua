@@ -20,7 +20,7 @@
 	</div>
 
 	<nav class="nav">
-		{#each navigation as item}
+		{#each navigation as item (item.href)}
 			<a
 				href={item.href}
 				class:selected={$page.url.pathname === item.href}

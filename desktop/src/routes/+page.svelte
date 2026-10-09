@@ -163,7 +163,7 @@
 			<p class="empty-state">No licenses yet. Add your first one from the form on this page.</p>
 		{:else}
 			<div class="stack">
-				{#each licenses.slice(0, 5) as license}
+				{#each licenses.slice(0, 5) as license (license.id)}
 					<a class="license-card" href={`/licenses/${license.id}`}>
 						<div>
 							<h4>{license.product_name}</h4>
@@ -264,7 +264,7 @@
 		<p class="empty-state">No upcoming reminder items right now.</p>
 	{:else}
 		<div class="stack">
-			{#each reminders.slice(0, 5) as item}
+			{#each reminders.slice(0, 5) as item (`${item.license_id}:${item.kind}`)}
 				<a class="license-card" href={`/licenses/${item.license_id}`}>
 					<div>
 						<h4>{item.product_name}</h4>

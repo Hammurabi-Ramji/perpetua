@@ -134,7 +134,7 @@
 					</tr>
 				</thead>
 				<tbody>
-					{#each filteredLicenses as license}
+					{#each filteredLicenses as license (license.id)}
 						<tr>
 							<td>
 								<strong>{license.product_name}</strong>
