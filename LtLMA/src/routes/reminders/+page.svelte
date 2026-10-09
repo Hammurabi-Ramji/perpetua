@@ -406,7 +406,7 @@
 <section class="panel">
 	<div class="panel-heading">
 		<div>
-			<h3>Auto-Maintain <span class="soon-badge">Coming soon · Pro</span></h3>
+			<h3>Auto-Maintain <span class="soon-badge">Not available</span></h3>
 			<p class="muted">
 				Let Perpetua keep deal accounts alive for you — automatically completing periodic
 				logins and redemption steps for vendors that require them, so a lifetime deal never

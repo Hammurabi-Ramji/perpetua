@@ -1672,6 +1672,7 @@ pub fn enable_cloud_backup(
     if webdav_url.is_empty() || settings.webdav_password.is_empty() {
         return Err(anyhow!("WebDAV server URL and password are required."));
     }
+    crate::cloud_backup::check_webdav_scheme(&webdav_url)?;
 
     let recovery_key = crate::cloud_backup::generate_recovery_key();
     crate::secret_store::write(crate::secret_store::BACKUP_KEY, user_id, &recovery_key)?;
