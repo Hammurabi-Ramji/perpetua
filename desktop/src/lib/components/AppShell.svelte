@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 
 	import { auth } from '#lib/stores/auth';
 
@@ -23,7 +23,7 @@
 		{#each navigation as item (item.href)}
 			<a
 				href={item.href}
-				class:selected={$page.url.pathname === item.href}
+				class:selected={page.url.pathname === item.href}
 			>
 				{item.label}
 			</a>

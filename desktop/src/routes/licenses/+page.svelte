@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 
 	import LicenseForm from '#lib/components/LicenseForm.svelte';
 	import PlanBanner from '#lib/components/PlanBanner.svelte';
@@ -63,7 +63,7 @@
 		void loadLicenses();
 		window.addEventListener('perpetua:pro-unlocked', loadLicenses);
 		// "File > Add License" (menu bar) deep-links here to open the form directly.
-		if ($page.url.searchParams.get('new') === '1') {
+		if (page.url.searchParams.get('new') === '1') {
 			showCreate = true;
 		}
 	});

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 
 	import LicenseForm from '#lib/components/LicenseForm.svelte';
@@ -20,7 +20,7 @@
 	let form: LicenseInput = emptyLicense();
 
 	function licenseId() {
-		return $page.params.id ?? '';
+		return page.params.id ?? '';
 	}
 
 	function toFormModel(record: License): LicenseInput {
