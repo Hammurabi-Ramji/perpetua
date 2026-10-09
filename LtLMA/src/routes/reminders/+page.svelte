@@ -21,7 +21,6 @@
 	let error: string | null = null;
 	let successMessage = '';
 	let items: ReminderItem[] = [];
-	let interested = false;
 	let settings: ReminderSettings = {
 		notification_email: '',
 		email_notifications: false,
@@ -415,15 +414,10 @@
 			</p>
 		</div>
 	</div>
-	{#if interested}
-		<p class="success-banner">You're on the list — we'll let you know when Auto-Maintain ships.</p>
-	{:else}
-		<div class="actions">
-			<button type="button" class="secondary" on:click={() => (interested = true)}>
-				Notify me when it's ready
-			</button>
-		</div>
-	{/if}
+	<p class="muted">
+		Auto-Maintain is a possible future feature and is not available. Tell us you want it:
+		<a href="mailto:support@hammurabi.click?subject=Auto-Maintain%20interest">support@hammurabi.click</a>
+	</p>
 </section>
 
 <style>
