@@ -82,4 +82,60 @@ describe('browser extension options', () => {
     expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:18765/api/health');
     expect(document.getElementById('status').textContent).toContain('Connection successful');
   });
+
+  it('renders the token field as a password input', () => {
+    expect(document.getElementById('apiToken').type).toBe('password');
+  });
+
+  it.each([
+    'http://localhost:18765',
+    'http://127.0.0.1:9000',
+    'http://127.0.0.1:18765/'
+  ])('accepts loopback apiBase %s on save', async (value) => {
+    document.dispatchEvent(new Event('DOMContentLoaded'));
+    await flush();
+
+    document.getElementById('apiBase').value = value;
+    document.getElementById('settings-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await flush();
+
+    expect(chrome.storage.local.set).toHaveBeenCalled();
+    expect(chrome.storage.local.set.mock.calls[0][0].apiBase).toBe(new URL(value).origin);
+  });
+
+  it.each([
+    'https://127.0.0.1:18765',
+    'http://evil.example.com:18765',
+    'http://127.0.0.1',
+    'http://127.0.0.1.evil.com:18765',
+    'http://user@127.0.0.1:18765',
+    'http://127.0.0.1:18765/api',
+    'ftp://localhost:21',
+    'not a url',
+    ''
+  ])('rejects non-loopback apiBase %j on save and shows an error', async (value) => {
+    document.dispatchEvent(new Event('DOMContentLoaded'));
+    await flush();
+
+    document.getElementById('apiBase').value = value;
+    document.getElementById('settings-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    await flush();
+
+    expect(chrome.storage.local.set).not.toHaveBeenCalled();
+    const status = document.getElementById('status');
+    expect(status.className).toContain('error');
+    expect(status.textContent).toContain('loopback');
+  });
+
+  it('refuses to test the connection against a non-loopback URL', async () => {
+    document.dispatchEvent(new Event('DOMContentLoaded'));
+    await flush();
+
+    document.getElementById('apiBase').value = 'http://evil.example.com:80';
+    document.getElementById('test-connection').click();
+    await flush();
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(document.getElementById('status').className).toContain('error');
+  });
 });

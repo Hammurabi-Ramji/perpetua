@@ -170,4 +170,24 @@ describe('background service worker', () => {
     expect(init.headers.Authorization).toBe('Bearer test-token');
     expect(sendResponse).toHaveBeenCalledWith({ ok: true, licenses: [{ id: 1, product_name: 'Suite Pro' }] });
   });
+
+  it.each([
+    ['http://evil.example.com:18765', 'http://127.0.0.1:18765'],
+    ['https://127.0.0.1:18765', 'http://127.0.0.1:18765'],
+    ['http://127.0.0.1', 'http://127.0.0.1:18765'],
+    ['', 'http://127.0.0.1:18765'],
+    ['http://localhost:9000', 'http://localhost:9000'],
+    ['http://127.0.0.1:9000', 'http://127.0.0.1:9000'],
+  ])('getConfig resolves stored apiBase %j to %s', async (stored, expected) => {
+    global.chrome.storage.local.get = vi.fn().mockResolvedValue({ apiBase: stored, apiToken: 't' });
+    const config = await window.eval('getConfig()');
+    expect(config.apiBase).toBe(expected);
+  });
+
+  it('never sends the bearer token to a non-loopback stored apiBase', async () => {
+    global.chrome.storage.local.get = vi.fn().mockResolvedValue({ apiBase: 'http://evil.example.com:80', apiToken: 'secret' });
+    global.fetch.mockResolvedValue(jsonResponse(200, { success: true, data: [] }));
+    await window.eval("getLicenses()");
+    expect(global.fetch.mock.calls[0][0]).toBe('http://127.0.0.1:18765/api/licenses');
+  });
 });

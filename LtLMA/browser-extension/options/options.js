@@ -9,7 +9,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     'notifyOnNewLicenses'
   ]);
 
-  document.getElementById('apiBase').value = settings.apiBase || 'http://127.0.0.1:18765';
+  document.getElementById('apiBase').value = normalizeLoopbackApiBase(settings.apiBase) || 'http://127.0.0.1:18765';
   document.getElementById('apiToken').value = settings.apiToken || '';
   document.getElementById('autoSync').checked = settings.autoSync !== false;
   document.getElementById('notifyOnNewLicenses').checked = settings.notifyOnNewLicenses !== false;
@@ -19,11 +19,39 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('test-connection').addEventListener('click', testConnection);
 });
 
+// Only loopback http origins (http://127.0.0.1:<port> or http://localhost:<port>)
+// may receive the bearer token. Returns the normalised origin, or null.
+// Keep in sync with normalizeLoopbackApiBase in lib/api.js.
+function normalizeLoopbackApiBase(value) {
+  if (typeof value !== 'string') return null;
+  let url;
+  try {
+    url = new URL(value.trim());
+  } catch (_) {
+    return null;
+  }
+  if (url.protocol !== 'http:') return null;
+  if (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost') return null;
+  if (!url.port) return null;
+  if (url.username || url.password) return null;
+  if (url.pathname !== '/' || url.search || url.hash) return null;
+  return url.origin;
+}
+
+const API_BASE_ERROR =
+  'API URL must be a loopback http URL, e.g. http://127.0.0.1:18765 or http://localhost:18765.';
+
 async function saveSettings(e) {
   e.preventDefault();
 
+  const apiBase = normalizeLoopbackApiBase(document.getElementById('apiBase').value);
+  if (!apiBase) {
+    showStatus(API_BASE_ERROR, 'error');
+    return;
+  }
+
   const settings = {
-    apiBase: document.getElementById('apiBase').value,
+    apiBase,
     apiToken: document.getElementById('apiToken').value.trim(),
     autoSync: document.getElementById('autoSync').checked,
     notifyOnNewLicenses: document.getElementById('notifyOnNewLicenses').checked
@@ -44,7 +72,11 @@ async function clearToken() {
 }
 
 async function testConnection() {
-  const apiBase = document.getElementById('apiBase').value;
+  const apiBase = normalizeLoopbackApiBase(document.getElementById('apiBase').value);
+  if (!apiBase) {
+    showStatus(API_BASE_ERROR, 'error');
+    return;
+  }
   const button = document.getElementById('test-connection');
   const originalText = button.textContent;
 

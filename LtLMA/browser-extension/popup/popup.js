@@ -20,32 +20,50 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('login-button').addEventListener('click', openSettings);
 });
 
+function renderMessage(container, text) {
+  const p = document.createElement('p');
+  p.textContent = text;
+  container.replaceChildren(p);
+}
+
+// API/scraped strings are untrusted: build the DOM with textContent only.
+function renderLicenseItem(license) {
+  const item = document.createElement('div');
+  item.className = 'license-item';
+
+  const name = document.createElement('div');
+  name.className = 'license-name';
+  name.textContent = String(license.product_name ?? '');
+
+  const meta = document.createElement('div');
+  meta.className = 'license-meta';
+  meta.textContent = `${license.source_site || '—'} • ${license.status ?? ''}`;
+
+  item.append(name, meta);
+  return item;
+}
+
 async function loadRecentLicenses() {
   const licensesList = document.getElementById('licenses-list');
   try {
     const result = await chrome.runtime.sendMessage({ action: 'getLicenses' });
 
     if (!result || !result.ok) {
-      licensesList.innerHTML = `<p>${(result && result.error) || 'Failed to load licenses'}</p>`;
+      renderMessage(licensesList, (result && result.error) || 'Failed to load licenses');
       return;
     }
 
     const licenses = result.licenses || [];
     if (licenses.length === 0) {
-      licensesList.innerHTML = '<p>No licenses found. Try syncing first.</p>';
+      renderMessage(licensesList, 'No licenses found. Try syncing first.');
       return;
     }
 
     const recent = licenses.slice(-5).reverse();
-    licensesList.innerHTML = recent.map(license => `
-      <div class="license-item">
-        <div class="license-name">${license.product_name}</div>
-        <div class="license-meta">${license.source_site || '—'} • ${license.status}</div>
-      </div>
-    `).join('');
+    licensesList.replaceChildren(...recent.map(renderLicenseItem));
   } catch (err) {
     console.error('Failed to load licenses:', err);
-    licensesList.innerHTML = '<p>Failed to load licenses</p>';
+    renderMessage(licensesList, 'Failed to load licenses');
   }
 }
 
