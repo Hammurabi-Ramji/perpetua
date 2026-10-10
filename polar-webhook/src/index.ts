@@ -7,6 +7,12 @@ export interface Env {
   POLAR_API_TOKEN: string;
   /** The "Early Bird — First 100" discount's id, from its URL in the Polar dashboard. */
   EARLY_BIRD_DISCOUNT_ID: string;
+  /**
+   * Optional Polar API origin. Defaults to production (https://api.polar.sh).
+   * Set to https://sandbox-api.polar.sh for the sandbox dry-run, or to a local
+   * mock server for the offline dry-run (see dryrun/README.md).
+   */
+  POLAR_API_BASE?: string;
 }
 
 const CORS_HEADERS = {
@@ -25,28 +31,93 @@ const HANDLED_EVENTS = new Set([
   "benefit_grant.revoked",
 ]);
 
-async function handleDiscountCount(env: Env): Promise<Response> {
-  const response = await fetch(
-    `https://api.polar.sh/v1/discounts/${env.EARLY_BIRD_DISCOUNT_ID}`,
-    { headers: { Authorization: `Bearer ${env.POLAR_API_TOKEN}` } },
-  );
+/**
+ * The non-personal subset of an event payload worth having in logs: enough
+ * to find the record in Polar's dashboard, nothing that identifies the buyer.
+ */
+export function eventSummary(data: unknown): Record<string, unknown> {
+  if (!data || typeof data !== "object") return {};
+  const record = data as Record<string, unknown>;
+  const pick = (key: string) => (typeof record[key] === "string" || typeof record[key] === "number" ? record[key] : undefined);
+  const nestedId = (key: string) => {
+    const value = record[key];
+    return value && typeof value === "object" && typeof (value as Record<string, unknown>).id === "string"
+      ? (value as Record<string, unknown>).id
+      : undefined;
+  };
+  const summary: Record<string, unknown> = {
+    id: pick("id"),
+    status: pick("status"),
+    amount: pick("amount") ?? pick("total_amount"),
+    currency: pick("currency"),
+    created_at: pick("created_at"),
+    customer_id: pick("customer_id") ?? nestedId("customer"),
+    product_id: pick("product_id") ?? nestedId("product"),
+    order_id: pick("order_id") ?? nestedId("order"),
+    benefit_id: pick("benefit_id") ?? nestedId("benefit"),
+  };
+  for (const key of Object.keys(summary)) {
+    if (summary[key] === undefined) delete summary[key];
+  }
+  return summary;
+}
 
-  if (!response.ok) {
-    return new Response("Could not reach Polar", {
-      status: 502,
-      headers: CORS_HEADERS,
-    });
+/** Upstream budget for the marketing counter; the page degrades fine on 502. */
+const POLAR_FETCH_TIMEOUT_MS = 5_000;
+
+function upstreamUnavailable(): Response {
+  return new Response("Could not reach Polar", {
+    status: 502,
+    headers: CORS_HEADERS,
+  });
+}
+
+async function handleDiscountCount(env: Env): Promise<Response> {
+  if (!env.EARLY_BIRD_DISCOUNT_ID || !env.POLAR_API_TOKEN) {
+    // Misconfigured deployment: don't hit Polar with an empty id/token.
+    console.error("discount-count: EARLY_BIRD_DISCOUNT_ID or POLAR_API_TOKEN not set");
+    return upstreamUnavailable();
   }
 
-  const discount = await response.json<{
-    redemptions_count: number;
-    max_redemptions: number | null;
-  }>();
+  const apiBase = (env.POLAR_API_BASE || "https://api.polar.sh").replace(/\/+$/, "");
+
+  // A network failure or a hung upstream must not turn into an unhandled
+  // rejection (Cloudflare surfaces those as a 1101 error page, which the
+  // marketing site's fetch() then can't distinguish from "worker is down").
+  let response: Response;
+  try {
+    response = await fetch(
+      `${apiBase}/v1/discounts/${encodeURIComponent(env.EARLY_BIRD_DISCOUNT_ID)}`,
+      {
+        headers: { Authorization: `Bearer ${env.POLAR_API_TOKEN}` },
+        signal: AbortSignal.timeout(POLAR_FETCH_TIMEOUT_MS),
+      },
+    );
+  } catch (error) {
+    console.error("discount-count: Polar fetch failed", error instanceof Error ? error.message : String(error));
+    return upstreamUnavailable();
+  }
+
+  if (!response.ok) {
+    console.error("discount-count: Polar responded", response.status);
+    return upstreamUnavailable();
+  }
+
+  let discount: { redemptions_count?: unknown; max_redemptions?: unknown };
+  try {
+    discount = await response.json();
+  } catch {
+    return upstreamUnavailable();
+  }
+  if (typeof discount.redemptions_count !== "number") {
+    return upstreamUnavailable();
+  }
+  const total = typeof discount.max_redemptions === "number" ? discount.max_redemptions : null;
 
   return new Response(
     JSON.stringify({
       claimed: discount.redemptions_count,
-      total: discount.max_redemptions,
+      total,
     }),
     {
       headers: {
@@ -105,10 +176,16 @@ export default {
     if (HANDLED_EVENTS.has(event.type)) {
       // TODO: replace with a durable write (D1/KV) once there's an actual
       // consumer for this data. Perpetua's own activation flow checks Polar
-      // once at unlock and never again (see LtLMA/src-tauri/src/polar.rs),
+      // once at unlock and never again (see desktop/src-tauri/src/polar.rs),
       // so today this is purely an ops/record-keeping signal, not something
       // that revokes access automatically.
-      console.log(`polar webhook: ${event.type}`, JSON.stringify(event.data));
+      //
+      // Log identifiers only. The full payload carries the buyer's name,
+      // email and billing address; Cloudflare's log retention is not a
+      // place that data has any business being (PRIVACY.md says Polar is
+      // the processor for purchase data, and Polar's dashboard already has
+      // the full record keyed by these ids).
+      console.log(`polar webhook: ${event.type}`, JSON.stringify(eventSummary(event.data)));
     } else {
       console.log(`polar webhook: ignoring ${event.type}`);
     }

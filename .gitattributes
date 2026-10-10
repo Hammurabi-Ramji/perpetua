@@ -1,0 +1,25 @@
+# Normalise line endings so Windows checkouts (the primary dev platform) and
+# the Linux/macOS CI runners see identical bytes. Without this, CRLF-committed
+# shell/YAML/lockfiles break on Linux and every cross-platform diff is noise.
+* text=auto eol=lf
+
+# Windows-native scripts keep CRLF so PowerShell/cmd behave.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binary assets.
+*.png binary
+*.ico binary
+*.icns binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.db binary
+*.sqlite binary
+*.pdf binary
+*.zip binary

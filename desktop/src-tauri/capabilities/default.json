@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Main Perpetua window: core APIs plus shell-open/dialog/notification/autostart used by the desktop shell (tray, reminders, launch-at-login toggle). No filesystem or OS-info access is granted to the webview; all vault I/O goes through the Rust API.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-focus",
+    "shell:allow-open",
+    "dialog:default",
+    "notification:default",
+    "autostart:default"
+  ]
+}

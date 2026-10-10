@@ -27,4 +27,4 @@ Third-party open-source components retain their own licenses; see
 dependency manifests (`package.json`, `Cargo.toml`) and vendor notices.
 
 Privacy, Terms of Use, and Support contacts for the launch product are
-published under `LtLMA/legal/`.
+published under `desktop/legal/`.
