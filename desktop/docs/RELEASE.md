@@ -114,3 +114,33 @@ attachments are preferred.
 - Quality gates: [TESTING.md](./TESTING.md)
 - Legal pack: `../legal/` (Privacy, Terms, Support)
 - Root product map: `../../README.md`
+
+## Purchase link and price (build-time env vars)
+
+The in-app upgrade modal reads these Vite variables at build time (see
+`.env.example`). Set them in the shell (or CI) before `npm run tauri build`:
+
+- `VITE_PERPETUA_CHECKOUT_URL` - the https Polar checkout link for Pro. If
+  unset or empty, the Buy button falls back to the product page
+  (`VITE_PERPETUA_PRODUCT_URL`) and is labelled accordingly. There is no
+  hard-coded checkout fallback.
+- `VITE_PERPETUA_PRO_PRICE` - displayed price text (default `$49.99`). Keep it
+  equal to the Polar product price.
+- `VITE_PERPETUA_PRODUCT_URL`, `VITE_PERPETUA_SUPPORT_EMAIL` - public product
+  page and support mailbox shown in the app.
+
+## CI release configuration
+
+The `Release` workflow (`.github/workflows/release.yml`) fails fast if required configuration is missing.
+
+Required:
+- `POLAR_ORGANIZATION_ID` (repo variable or secret)
+- `PERPETUA_LICENSE_SECRET` (secret)
+
+Optional (repo variables): `VITE_PERPETUA_CHECKOUT_URL` (warns if unset), `VITE_PERPETUA_PRO_PRICE`, `VITE_PERPETUA_PRODUCT_URL`, `VITE_PERPETUA_SUPPORT_EMAIL`.
+
+Windows signing (disabled by default): set variable `SIGN_WINDOWS=true`, variables `TRUSTED_SIGNING_ENDPOINT`, `TRUSTED_SIGNING_ACCOUNT`, `TRUSTED_SIGNING_PROFILE`, and secrets `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`. macOS notarization is documented as comments only.
+
+The publish job creates a draft release with `SHA256SUMS.txt` and build-provenance attestations.
+
+Manual step: delete the stale v1.0.0 GitHub release assets, and tag v1.1.0 only after the P0 fixes are merged.

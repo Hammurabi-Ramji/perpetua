@@ -45,13 +45,13 @@ jobs:
       - name: Check release configuration
         shell: bash
         env:
-          POLAR_ORGANIZATION_ID: ${{ secrets.POLAR_ORGANIZATION_ID }}
+          POLAR_ORGANIZATION_ID: ${{ vars.POLAR_ORGANIZATION_ID || secrets.POLAR_ORGANIZATION_ID }}
           PERPETUA_LICENSE_SECRET: ${{ secrets.PERPETUA_LICENSE_SECRET }}
           VITE_PERPETUA_CHECKOUT_URL: ${{ vars.VITE_PERPETUA_CHECKOUT_URL }}
         run: |
           fail=0
           if [ -z "$POLAR_ORGANIZATION_ID" ]; then
-            echo "::error::POLAR_ORGANIZATION_ID repository secret is not set — in-app Polar activation would be compiled out."
+            echo "::error::POLAR_ORGANIZATION_ID (repository variable or secret) is not set — in-app Polar activation would be compiled out."
             fail=1
           fi
           if [ -z "$PERPETUA_LICENSE_SECRET" ]; then
@@ -107,7 +107,7 @@ jobs:
         run: npm run tauri build
         env:
           # Bakes in Polar activation for this build (checked non-empty above).
-          POLAR_ORGANIZATION_ID: ${{ secrets.POLAR_ORGANIZATION_ID }}
+          POLAR_ORGANIZATION_ID: ${{ vars.POLAR_ORGANIZATION_ID || secrets.POLAR_ORGANIZATION_ID }}
           # Signs offline-issued Pro license keys. Release builds fail to
           # compile without this set (see src-tauri/src/services.rs).
           PERPETUA_LICENSE_SECRET: ${{ secrets.PERPETUA_LICENSE_SECRET }}
@@ -133,6 +133,37 @@ jobs:
             exit 1
           }
 
+      # ---- BLD-06 (disabled by default): Windows code signing ----------------
+      # Enable by setting repo variable SIGN_WINDOWS=true and filling the
+      # placeholder variables below. No credentials are stored in this file;
+      # azure/trusted-signing-action authenticates via AZURE_* secrets
+      # (AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET) that YOU create.
+      - name: Sign Windows installers (Trusted Signing)
+        if: vars.SIGN_WINDOWS == 'true' && matrix.platform == 'windows-latest'
+        uses: azure/trusted-signing-action@v0.5.0 # TODO pin to SHA
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ vars.TRUSTED_SIGNING_ENDPOINT }}        # PLACEHOLDER e.g. https://<region>.codesigning.azure.net
+          trusted-signing-account-name: ${{ vars.TRUSTED_SIGNING_ACCOUNT }}   # PLACEHOLDER
+          certificate-profile-name: ${{ vars.TRUSTED_SIGNING_PROFILE }}       # PLACEHOLDER
+          files-folder: desktop/src-tauri/target/release/bundle
+          files-folder-recurse: true
+          files-folder-filter: msi,exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      # NOTE: signing after `tauri build` signs the bundles but not the inner
+      # app exe embedded in them; for full coverage use Tauri's signCommand.
+
+      # ---- BLD-06 (not implemented): macOS signing + notarization ------------
+      # Needs Apple Developer ID. Typically done by exposing these env vars to
+      # the Build step above (Tauri signs and notarizes automatically):
+      #   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
+      #   APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
+      # all from repo secrets, guarded by vars.SIGN_MACOS == 'true'.
+
       - name: Stash installers
         uses: actions/upload-artifact@v4
         with:
@@ -152,6 +183,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - name: Download all installers
         uses: actions/download-artifact@v4
@@ -163,14 +196,26 @@ jobs:
       - name: List collected assets
         run: ls -la dist
 
-      - name: Checksums
+      - name: Generate SHA256SUMS.txt
         run: |
           cd dist
-          sha256sum * > SHA256SUMS.txt
+          find . -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2 # TODO pin to SHA
+        with:
+          subject-path: |
+            dist/**/*.msi
+            dist/**/*.exe
+            dist/**/*.dmg
+            dist/**/*.app.tar.gz
+            dist/**/*.deb
+            dist/**/*.rpm
+            dist/**/*.AppImage
+
       - name: Upload release assets
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@v3 # TODO pin to SHA
         with:
           draft: true
           prerelease: false

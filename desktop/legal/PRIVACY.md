@@ -89,6 +89,17 @@ contacting Polar.
 - Clear the browser extension's stored token from its Options page at any
   time.
 
+## Your rights and retention
+
+You may ask us for access to, or deletion of, any personal data that
+Hammurabi Coding Company, LLC holds about you (for example, purchase or
+support correspondence) by emailing hcc@hammurabicodingcompany.com with
+"Privacy" in the subject line. Data held by Polar.sh as Merchant of Record is
+subject to Polar's policies and requests may need to be directed to Polar.
+Data in the app is stored locally and is under your control; you can delete
+it at any time by removing the app data directory (or using the in-app Vault
+Tools).
+
 ## Children
 
 Perpetua is not directed at children under 13.

@@ -101,4 +101,31 @@ describe('browser extension popup', () => {
     expect(document.getElementById('auth-status').textContent).toBe('Not authenticated');
     expect(document.getElementById('login-prompt').classList.contains('hidden')).toBe(false);
   });
+
+  it('renders hostile product names and errors as text, never as markup', async () => {
+    const hostile = '<img src=x onerror=alert(1)>';
+    chrome.runtime.sendMessage = vi.fn(async () => ({
+      ok: true,
+      licenses: [{ id: 2, product_name: hostile, source_site: '<b>site</b>', status: '<i>x</i>' }]
+    }));
+    document.dispatchEvent(new Event('DOMContentLoaded'));
+    await flush();
+
+    const list = document.getElementById('licenses-list');
+    expect(list.querySelector('.license-name').textContent).toBe(hostile);
+    expect(list.textContent).toContain('<b>site</b>');
+    expect(list.querySelector('img')).toBeNull();
+    expect(list.querySelector('b')).toBeNull();
+    expect(list.querySelector('i')).toBeNull();
+  });
+
+  it('renders an API error message as text, never as markup', async () => {
+    chrome.runtime.sendMessage = vi.fn(async () => ({ ok: false, error: '<img src=x onerror=alert(1)>' }));
+    document.dispatchEvent(new Event('DOMContentLoaded'));
+    await flush();
+
+    const list = document.getElementById('licenses-list');
+    expect(list.textContent).toBe('<img src=x onerror=alert(1)>');
+    expect(list.querySelector('img')).toBeNull();
+  });
 });

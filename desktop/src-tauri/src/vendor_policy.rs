@@ -70,11 +70,19 @@ fn load_dataset() -> VendorPolicyDataset {
         .join("perpetua")
         .join("vendor-policies.json");
     if let Ok(text) = std::fs::read_to_string(&override_path) {
-        if let Ok(parsed) = serde_json::from_str::<VendorPolicyDataset>(&text) {
+        if let Ok(mut parsed) = serde_json::from_str::<VendorPolicyDataset>(&text) {
+            drop_out_of_range_days(&mut parsed);
             return parsed;
         }
     }
     serde_json::from_str(BUNDLED_POLICIES).expect("bundled vendor-policies.json must parse")
+}
+
+/// Drop override-file policies whose `keepalive_days` is outside 1..=3650.
+/// A missing value (`None`, "no requirement") is valid and is kept.
+fn drop_out_of_range_days(data: &mut VendorPolicyDataset) {
+    data.policies
+        .retain(|p| p.keepalive_days.map_or(true, |d| (1..=3650).contains(&d)));
 }
 
 fn dataset() -> &'static VendorPolicyDataset {
@@ -98,6 +106,27 @@ fn normalize(value: &str) -> String {
 /// normalized), so the alias "ph" matches "ph" but not "philips".
 fn has_phrase(haystack: &str, needle: &str) -> bool {
     !needle.is_empty() && format!(" {haystack} ").contains(&format!(" {needle} "))
+}
+
+const TLD_SUFFIXES: [&str; 3] = ["com", "net", "io"];
+
+/// Word-boundary alias match on a normalized site string: whole-word phrase
+/// match (either direction), or equal ignoring spaces so "App Sumo" matches
+/// the alias "appsumo", or equal once a glued TLD is stripped ("appsumocom").
+/// Never a partial-word substring match.
+fn alias_matches(site: &str, alias: &str) -> bool {
+    if alias.is_empty() {
+        return false;
+    }
+    if has_phrase(site, alias) || (site.len() >= 3 && has_phrase(alias, site)) {
+        return true;
+    }
+    let site_compact: String = site.split_whitespace().collect();
+    let alias_compact: String = alias.split_whitespace().collect();
+    site_compact == alias_compact
+        || TLD_SUFFIXES
+            .iter()
+            .any(|tld| site_compact.strip_suffix(tld) == Some(alias_compact.as_str()))
 }
 
 fn is_fallback(policy: &VendorPolicy) -> bool {
@@ -151,10 +180,7 @@ pub fn suggest_keepalive(
     if !site.is_empty() {
         for policy in &data.policies {
             let aliases: Vec<String> = policy.aliases.iter().map(|a| normalize(a)).collect();
-            if aliases
-                .iter()
-                .any(|a| has_phrase(&site, a) || (site.len() >= 3 && has_phrase(a, &site)))
-                && !is_fallback(policy)
+            if aliases.iter().any(|a| alias_matches(&site, a)) && !is_fallback(policy)
             {
                 return suggestion_from(policy, data.version);
             }
@@ -266,13 +292,42 @@ mod tests {
     }
 
     #[test]
-    fn short_alias_matches_whole_word_only() {
-        assert_eq!(
-            suggest_keepalive(Some("PH"), None).policy_id.as_deref(),
-            Some("producthunt")
-        );
+    fn short_aliases_removed_and_partial_words_do_not_match() {
+        // "ph" and "sumo" are no longer aliases (VP-01): too easy to hit by accident.
+        assert!(!suggest_keepalive(Some("PH"), None).matched);
         assert!(!suggest_keepalive(Some("Philips Hue"), Some("Widget")).matched);
         assert!(!suggest_keepalive(Some("Graphite"), Some("Widget")).matched);
+        for site in ["Sumo Logic", "Graphic Design Co", "Dolphin"] {
+            assert!(!suggest_keepalive(Some(site), None).matched, "{site}");
+        }
+    }
+
+    #[test]
+    fn appsumo_spellings_match() {
+        for site in ["AppSumo", "appsumo.com", "App Sumo", "www.appsumo.com", "appsumocom"] {
+            let s = suggest_keepalive(Some(site), None);
+            assert!(s.matched, "{site} should match");
+            assert_eq!(s.policy_id.as_deref(), Some("appsumo"), "{site}");
+        }
+    }
+
+    #[test]
+    fn product_hint_requires_word_boundary_for_lifetime_and_ltd() {
+        assert!(!suggest_keepalive(None, Some("Multilifetimes Suite")).matched);
+        assert!(!suggest_keepalive(None, Some("Gold Ltdx")).matched);
+    }
+
+    #[test]
+    fn override_days_out_of_range_are_dropped() {
+        let json = r#"{"version":9,"updated":"x","policies":[
+            {"id":"a","vendor":"A","aliases":["a"],"keepalive_days":0,"source":"s","last_verified":"d","confidence":"low"},
+            {"id":"b","vendor":"B","aliases":["b"],"keepalive_days":4000,"source":"s","last_verified":"d","confidence":"low"},
+            {"id":"c","vendor":"C","aliases":["c"],"keepalive_days":90,"source":"s","last_verified":"d","confidence":"low"},
+            {"id":"d","vendor":"D","aliases":["d"],"source":"s","last_verified":"d","confidence":"low"}]}"#;
+        let mut parsed: VendorPolicyDataset = serde_json::from_str(json).unwrap();
+        drop_out_of_range_days(&mut parsed);
+        let ids: Vec<&str> = parsed.policies.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["c", "d"]);
     }
 
     #[test]

@@ -9,7 +9,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     'notifyOnNewLicenses'
   ]);
 
-  document.getElementById('apiBase').value = settings.apiBase || 'http://127.0.0.1:18765';
+  document.getElementById('apiBase').value = normalizeLoopbackApiBase(settings.apiBase) || 'http://127.0.0.1:18765';
   document.getElementById('apiToken').value = settings.apiToken || '';
   document.getElementById('autoSync').checked = settings.autoSync !== false;
   document.getElementById('notifyOnNewLicenses').checked = settings.notifyOnNewLicenses !== false;
@@ -19,38 +19,34 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('test-connection').addEventListener('click', testConnection);
 });
 
-const DEFAULT_API_BASE_URL = 'http://127.0.0.1:18765';
-
-// The API base is where the bearer token gets sent. Perpetua only ever
-// listens on loopback, so any other host is either a typo or an attempt to
-// exfiltrate the token — refuse both. Returns the normalised origin
-// (scheme + host + port, no trailing slash) or null.
-function validateApiBase(raw) {
-  const text = (raw || '').trim() || DEFAULT_API_BASE_URL;
+// Only loopback http origins (http://127.0.0.1:<port> or http://localhost:<port>)
+// may receive the bearer token. Returns the normalised origin, or null.
+// Keep in sync with normalizeLoopbackApiBase in lib/api.js.
+function normalizeLoopbackApiBase(value) {
+  if (typeof value !== 'string') return null;
   let url;
   try {
-    url = new URL(text);
-  } catch {
+    url = new URL(value.trim());
+  } catch (_) {
     return null;
   }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
-  const host = url.hostname.toLowerCase();
-  const loopback = host === '127.0.0.1' || host === 'localhost' || host === '[::1]' || host === '::1';
-  if (!loopback) return null;
-  if (url.username || url.password || url.search || url.hash) return null;
-  if (url.pathname !== '/' && url.pathname !== '') return null;
+  if (url.protocol !== 'http:') return null;
+  if (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost') return null;
+  if (!url.port) return null;
+  if (url.username || url.password) return null;
+  if (url.pathname !== '/' || url.search || url.hash) return null;
   return url.origin;
 }
+
+const API_BASE_ERROR =
+  'The Perpetua API URL must point at this computer (a loopback http URL), e.g. http://127.0.0.1:18765 or http://localhost:18765. The token is never sent anywhere else.';
 
 async function saveSettings(e) {
   e.preventDefault();
 
-  const apiBase = validateApiBase(document.getElementById('apiBase').value);
+  const apiBase = normalizeLoopbackApiBase(document.getElementById('apiBase').value);
   if (!apiBase) {
-    showStatus(
-      'The Perpetua API URL must point at this computer, e.g. http://127.0.0.1:18765. The token is never sent anywhere else.',
-      'error',
-    );
+    showStatus(API_BASE_ERROR, 'error');
     return;
   }
 
@@ -77,9 +73,9 @@ async function clearToken() {
 }
 
 async function testConnection() {
-  const apiBase = validateApiBase(document.getElementById('apiBase').value);
+  const apiBase = normalizeLoopbackApiBase(document.getElementById('apiBase').value);
   if (!apiBase) {
-    showStatus('The Perpetua API URL must point at this computer, e.g. http://127.0.0.1:18765.', 'error');
+    showStatus(API_BASE_ERROR, 'error');
     return;
   }
   const button = document.getElementById('test-connection');

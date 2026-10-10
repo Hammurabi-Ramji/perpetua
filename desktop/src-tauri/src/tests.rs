@@ -12,7 +12,7 @@ use crate::api::build_router;
 use crate::database::{backup_dir_at, db_path_at, init_db_at};
 use crate::models::{AccountRecoverySettings, EnableCloudBackupRequest, LicensePayload};
 use crate::services::{
-    activate_pro, add_license, authenticate_user, collect_due_notifications, confirm_password_reset,
+    activate_pro, add_license, authenticate_user, collect_due_notifications, mark_notice_delivered, pending_notifications, confirm_password_reset,
     create_backup_in_dir, create_jwt, create_user, delete_license, enable_cloud_backup,
     export_licenses_csv, export_licenses_json, get_entitlement, get_license_by_id, get_license_stats,
     get_licenses, get_reminder_items, import_licenses_csv, import_licenses_json, list_backups_in_dir,
@@ -39,6 +39,30 @@ fn sample_license(product_name: &str, expiry_date: Option<&str>) -> LicensePaylo
         keepalive_days: None,
         last_active: None,
     }
+}
+
+#[test]
+fn keepalive_days_out_of_range_is_rejected_and_stored_bad_rows_do_not_panic() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let user = create_user(&conn, "keepalive@example.com", "password123").expect("user");
+
+    for days in [3651_i64, 99_999_999_999_i64] {
+        let mut payload = sample_license("Too Long", None);
+        payload.keepalive_days = Some(days);
+        assert!(add_license(&conn, user.id, payload).is_err());
+    }
+
+    conn.execute(
+        "INSERT INTO licenses (user_id, product_name, license_key, purchase_date, status,
+            action_required, created_at, updated_at, keepalive_days)
+         VALUES (?, 'Bad Row', 'BAD-KEY', '2026-01-01', 'active', 0, '2026-01-01', '2026-01-01', 99999999999)",
+        rusqlite::params![user.id],
+    )
+    .expect("insert bad row");
+
+    let _ = get_reminder_items(&conn, user.id).expect("reminders do not fail");
+    let _ = collect_due_notifications(&conn).expect("notifications do not fail");
 }
 
 #[test]
@@ -150,12 +174,35 @@ fn background_notifications_fire_for_due_items_and_dedupe_per_day() {
     add_license(&conn, user.id, sample_license("Far Off", Some(&in_twenty)))
         .expect("far license");
 
-    let first = collect_due_notifications(&conn).expect("first pass");
+    let first = pending_notifications(&conn).expect("first pass");
     assert_eq!(first.len(), 2, "due action + near expiry should notify");
 
+    // Not marked until delivery is confirmed: still pending.
+    assert_eq!(pending_notifications(&conn).expect("pending").len(), 2);
+    for n in &first {
+        mark_notice_delivered(&conn, n).expect("mark");
+    }
+
     // Same day: already-notified items are not re-sent.
-    let second = collect_due_notifications(&conn).expect("second pass");
+    let second = pending_notifications(&conn).expect("second pass");
     assert!(second.is_empty(), "no duplicate notifications within a day");
+}
+
+#[test]
+fn users_with_desktop_reminders_off_get_no_notices() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let user = create_user(&conn, "quiet@example.com", "password123").expect("user");
+    let today = chrono::Utc::now().date_naive().format("%Y-%m-%d").to_string();
+    add_license(&conn, user.id, sample_license("Expires Today", Some(&today))).expect("license");
+    assert_eq!(collect_due_notifications(&conn).expect("on").len(), 1);
+
+    conn.execute(
+        "UPDATE users SET browser_notifications = 0 WHERE id = ?",
+        rusqlite::params![user.id],
+    )
+    .expect("disable");
+    assert!(collect_due_notifications(&conn).expect("off").is_empty());
 }
 
 #[test]
@@ -975,7 +1022,7 @@ async fn restore_vault_from_bytes_swaps_live_connection() {
 }
 
 #[tokio::test]
-async fn restore_route_is_reachable_without_auth_header() {
+async fn restore_route_is_reachable_without_auth_header_on_empty_vault() {
     let temp = tempdir().expect("temp dir");
     let conn = init_db_at(temp.path()).expect("db");
     let router = build_router(Arc::new(Mutex::new(conn)), Arc::new("test-secret".to_string()));
@@ -1139,4 +1186,96 @@ fn reminders_skip_inactive_licenses_and_honour_notification_preference() {
     conn.execute("UPDATE users SET browser_notifications = 0 WHERE id = ?1", rusqlite::params![other.id])
         .expect("disable notifications");
     assert!(collect_due_notifications(&conn).expect("second pass").is_empty());
+}
+
+const RESTORE_BODY_NO_CONFIRM: &str = r#"{"webdav_url":"http://127.0.0.1:1","webdav_username":"u","webdav_password":"p","remote_path":"/x","recovery_key":"not-a-real-key"}"#;
+const RESTORE_BODY_CONFIRM: &str = r#"{"webdav_url":"http://127.0.0.1:1","webdav_username":"u","webdav_password":"p","remote_path":"/x","recovery_key":"not-a-real-key","confirm":true}"#;
+
+#[tokio::test]
+async fn restore_route_requires_auth_when_users_exist() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    create_user(&conn, "existing@example.com", "password123").expect("user");
+    let router = build_router(Arc::new(Mutex::new(conn)), Arc::new("test-secret".to_string()));
+
+    let response = router
+        .oneshot(http("POST", "/api/cloud-backup/restore", None, Some(RESTORE_BODY_CONFIRM)))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn restore_route_requires_confirm_when_users_exist() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let user = create_user(&conn, "existing@example.com", "password123").expect("user");
+    let token = create_jwt("test-secret", &user).expect("token");
+    let router = build_router(Arc::new(Mutex::new(conn)), Arc::new("test-secret".to_string()));
+
+    let response = router
+        .oneshot(http(
+            "POST",
+            "/api/cloud-backup/restore",
+            Some(&token),
+            Some(RESTORE_BODY_NO_CONFIRM),
+        ))
+        .await
+        .expect("response");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+fn host_request(host: &str) -> Request<Body> {
+    Request::builder()
+        .uri("/api/health")
+        .method("GET")
+        .header("host", host)
+        .body(Body::empty())
+        .expect("request")
+}
+
+#[tokio::test]
+async fn host_guard_rejects_foreign_host_with_421() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let router = build_router(Arc::new(Mutex::new(conn)), Arc::new("test-secret".to_string()));
+
+    for host in ["evil.example.com", "evil.example.com:18765", "127.0.0.1.evil.com:18765"] {
+        let response = router.clone().oneshot(host_request(host)).await.expect("response");
+        assert_eq!(response.status(), StatusCode::MISDIRECTED_REQUEST, "host {host}");
+    }
+}
+
+#[tokio::test]
+async fn host_guard_allows_loopback_hosts_and_missing_host() {
+    let temp = tempdir().expect("temp dir");
+    let conn = init_db_at(temp.path()).expect("db");
+    let router = build_router(Arc::new(Mutex::new(conn)), Arc::new("test-secret".to_string()));
+
+    for host in ["localhost:18765", "127.0.0.1:18765", "[::1]:18765", "LOCALHOST:18765"] {
+        let response = router.clone().oneshot(host_request(host)).await.expect("response");
+        assert_eq!(response.status(), StatusCode::OK, "host {host}");
+    }
+
+    // No Host header at all (plain oneshot) must still pass.
+    let response = router
+        .oneshot(http("GET", "/api/health", None, None))
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[test]
+fn webdav_scheme_check_requires_https_except_loopback() {
+    use crate::cloud_backup::validate_server_url as check_webdav_scheme;
+    assert!(check_webdav_scheme("http://example.com").is_err());
+    assert!(check_webdav_scheme("http://127.0.0.1@evil.com/x").is_err());
+    assert!(check_webdav_scheme("ftp://example.com").is_err());
+    assert!(check_webdav_scheme("example.com/dav").is_err());
+    assert!(check_webdav_scheme("http://127.0.0.1:1234").is_ok());
+    assert!(check_webdav_scheme("http://localhost/dav").is_ok());
+    assert!(check_webdav_scheme("http://[::1]:8080/dav").is_ok());
+    assert!(check_webdav_scheme("https://x").is_ok());
 }

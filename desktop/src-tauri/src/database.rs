@@ -97,7 +97,7 @@ pub fn apply_schema(conn: &Connection) -> Result<()> {
             password_hash TEXT NOT NULL,
             notification_email TEXT,
             email_notifications INTEGER NOT NULL DEFAULT 1,
-            browser_notifications INTEGER NOT NULL DEFAULT 0,
+            browser_notifications INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL,
             last_login TEXT
         );
