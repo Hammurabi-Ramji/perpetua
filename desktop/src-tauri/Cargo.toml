@@ -29,7 +29,7 @@ tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
 axum = "0.7"
 tokio = { version = "1", features = ["full"] }
-rusqlite = { version = "0.31", features = ["bundled", "backup"] }
+rusqlite = { version = "0.40", features = ["bundled", "backup"] }
 bcrypt = "0.15"
 jsonwebtoken = "9"
 chrono = { version = "0.4", features = ["serde"] }
