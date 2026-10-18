@@ -1,6 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { writable } from "svelte/store";
 
 const api = vi.hoisted(() => ({
   deleteLicense: vi.fn(async () => undefined),
@@ -16,25 +15,13 @@ const api = vi.hoisted(() => ({
   updateLicense: vi.fn(),
 }));
 
-vi.mock("$lib/api", () => api);
-// Vitest resolves Svelte's SSR entry where onMount never fires; run it inline.
-vi.mock("svelte", async (importOriginal) => {
-  const actual = await importOriginal<Record<string, unknown>>();
-  return {
-    ...actual,
-    // testing-library probes Svelte 5's mount; declare it absent (Svelte 4).
-    mount: undefined,
-    flushSync: undefined,
-    unmount: undefined,
-    hydrate: undefined,
-    onMount: (fn: () => unknown) => {
-      void fn();
-    },
-  };
-});
+vi.mock("#lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("#lib/api")>()),
+  ...api,
+}));
 vi.mock("$app/navigation", () => ({ goto: vi.fn(async () => {}) }));
-vi.mock("$app/stores", () => ({
-  page: writable({ params: { id: "abc" } }),
+vi.mock("$app/state", () => ({
+  page: { params: { id: "abc" } },
 }));
 
 import LicensePage from "../src/routes/licenses/[id]/+page.svelte";

@@ -1,27 +1,22 @@
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 beforeEach(() => {
   vi.resetModules();
 });
 
-afterEach(() => {
+afterEach(async () => {
+  // Same module instance the test rendered with (see resetModules above).
+  const { cleanup } = await import("@testing-library/svelte");
   cleanup();
   vi.clearAllMocks();
-  vi.doUnmock("$lib/api");
+  vi.doUnmock("#lib/api");
 });
 
 describe("Perpetua vault tools page", () => {
   it(
     "creates a backup from the page",
     async () => {
-    vi.doMock("$lib/api", () => ({
+    vi.doMock("#lib/api", () => ({
       createBackup: vi.fn().mockResolvedValue({
         file_name: "perpetua-backup-20260514-040000.db",
         created_at: "2026-05-14T04:00:00Z",
@@ -33,6 +28,8 @@ describe("Perpetua vault tools page", () => {
       listBackups: vi.fn().mockResolvedValue([]),
     }));
 
+    const { fireEvent, render, screen, waitFor } =
+      await import("@testing-library/svelte");
     const { default: VaultPage } =
       await import("../src/routes/vault/+page.svelte");
     render(VaultPage);
@@ -51,7 +48,7 @@ describe("Perpetua vault tools page", () => {
   );
 
   it("renders export, import, and backup sections", async () => {
-    vi.doMock("$lib/api", () => ({
+    vi.doMock("#lib/api", () => ({
       createBackup: vi.fn(),
       exportLicensesCsv: vi.fn().mockResolvedValue({
         filename: "perpetua-licenses.csv",
@@ -71,6 +68,8 @@ describe("Perpetua vault tools page", () => {
       ]),
     }));
 
+    const { fireEvent, render, screen, waitFor } =
+      await import("@testing-library/svelte");
     const { default: VaultPage } =
       await import("../src/routes/vault/+page.svelte");
     const clickSpy = vi.fn();

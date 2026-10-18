@@ -1,13 +1,13 @@
 <script lang="ts">
-	import { browser } from '$app/environment';
+	import { browser } from '$app/env';
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 
-	import AppShell from '$lib/components/AppShell.svelte';
-	import UpgradeModal from '$lib/components/UpgradeModal.svelte';
-	import { auth } from '$lib/stores/auth';
-	import { refreshEntitlement } from '$lib/stores/entitlement';
+	import AppShell from '#lib/components/AppShell.svelte';
+	import UpgradeModal from '#lib/components/UpgradeModal.svelte';
+	import { auth } from '#lib/stores/auth';
+	import { refreshEntitlement } from '#lib/stores/entitlement';
 
 	let mounted = false;
 
@@ -62,7 +62,7 @@
 	}
 
 	$: if (browser && mounted && $auth.initialized) {
-		const onLoginPage = $page.url.pathname === '/login';
+		const onLoginPage = page.url.pathname === '/login';
 		if (!onLoginPage && !$auth.user) {
 			goto('/login');
 		}
@@ -76,7 +76,7 @@
 	<div class="fullscreen-state">
 		<p>Loading Perpetua...</p>
 	</div>
-{:else if $page.url.pathname === '/login'}
+{:else if page.url.pathname === '/login'}
 	<slot />
 {:else if $auth.user}
 	<div class="app-layout">

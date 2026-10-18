@@ -4,8 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import LicenseForm from "../src/lib/components/LicenseForm.svelte";
 import { emptyLicense } from "../src/lib/types";
 
-vi.mock("$lib/api", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("$lib/api")>();
+vi.mock("#lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("#lib/api")>();
   return {
     ...actual,
     suggestVendorPolicy: vi.fn().mockResolvedValue({
@@ -30,13 +30,11 @@ describe("Perpetua license form", () => {
   it("submits the current model", async () => {
     const model = emptyLicense();
     const submitSpy = vi.fn();
-    const { component } = render(LicenseForm, {
-      model,
-      submitLabel: "Create license",
-      busy: false,
+    // Svelte 5 removed component.$on(); attach the listener through mount().
+    render(LicenseForm, {
+      props: { model, submitLabel: "Create license", busy: false },
+      events: { submit: submitSpy },
     });
-
-    component.$on("submit", submitSpy);
 
     await fireEvent.input(screen.getByPlaceholderText("Figma Pro"), {
       target: { value: "Test Product" },
