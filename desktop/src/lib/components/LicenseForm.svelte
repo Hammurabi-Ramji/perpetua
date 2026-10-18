@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { createEventDispatcher, onDestroy } from 'svelte';
 
-	import { suggestVendorPolicy, type VendorPolicySuggestion } from '$lib/api';
-	import { extractLicenseFieldsFromImage } from '$lib/ocr';
-	import type { LicenseInput } from '$lib/types';
+	import { suggestVendorPolicy, type VendorPolicySuggestion } from '#lib/api';
+	import { extractLicenseFieldsFromImage } from '#lib/ocr';
+	import type { LicenseInput } from '#lib/types';
 
 	export let model: LicenseInput;
 	export let submitLabel = 'Save license';

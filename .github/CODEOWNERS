@@ -1,0 +1,9 @@
+# Review is requested from the owner for everything. Narrow this per path when
+# more maintainers join. Enforcement needs the "Require review from Code Owners"
+# branch-protection setting (GitHub -> Settings -> Branches), which is an owner
+# action: see docs/REMAINING_TASKS.md.
+*                          @Hammurabi-Ramji
+/.github/                  @Hammurabi-Ramji
+/desktop/legal/            @Hammurabi-Ramji
+/desktop/src-tauri/        @Hammurabi-Ramji
+/polar-webhook/            @Hammurabi-Ramji

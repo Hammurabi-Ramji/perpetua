@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { activateLicense } from '$lib/api';
-	import { BUY_URL, CHECKOUT_CONFIGURED, PRO_PRICE } from '$lib/commerce';
-	import { closePaywall, entitlement, paywallOpen } from '$lib/stores/entitlement';
+	import { activateLicense } from '#lib/api';
+	import { BUY_URL, CHECKOUT_CONFIGURED, PRO_PRICE } from '#lib/commerce';
+	import { closePaywall, entitlement, paywallOpen } from '#lib/stores/entitlement';
 
 	// Polar.sh is the Merchant of Record for the one-time Pro license (they
 	// handle tax/VAT/fraud and email the license key on purchase). The checkout
