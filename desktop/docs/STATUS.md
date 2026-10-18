@@ -7,7 +7,7 @@ For day-to-day usage, see the [User Guide](./USER_GUIDE.md); for problems, see
 ## What works
 
 - **License vault** — add, edit, delete, search; free tier holds 3 licenses,
-  Pro unlocks unlimited (Polar checkout or an offline key)
+  Pro unlocks unlimited ($49.99 one-time, activated through Polar)
 - **Screenshot autofill** — upload a receipt or confirmation email and it
   pulls out the license key, purchase/expiry dates, and amount. Runs fully
   offline (local OCR); nothing leaves the device

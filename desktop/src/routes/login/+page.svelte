@@ -43,6 +43,7 @@
 	let restoreBusy = false;
 	let restoreError = '';
 	let restoreDone = false;
+	let restoreConfirmed = false;
 
 	function submit() {
 		if (mode === 'login') {
@@ -95,22 +96,23 @@
 		mode = 'restore';
 		restoreError = '';
 		restoreDone = false;
+		restoreConfirmed = false;
 	}
 
 	async function submitRestore() {
 		restoreBusy = true;
 		restoreError = '';
 		try {
-			// No session can exist yet on a fresh install — clear anything stale
-			// before restoring, so the post-restore login is unambiguous.
-			clearStoredToken();
 			await restoreCloudBackup({
 				webdav_url: restoreWebdavUrl.trim(),
 				webdav_username: restoreWebdavUsername.trim(),
 				webdav_password: restoreWebdavPassword,
 				remote_path: restoreRemotePath.trim() || '/perpetua-backups',
-				recovery_key: restoreRecoveryKey.trim()
+				recovery_key: restoreRecoveryKey.trim(),
+				confirm: restoreConfirmed
 			});
+			// The restored vault has its own accounts; any old session is stale.
+			clearStoredToken();
 			restoreDone = true;
 		} catch (error) {
 			restoreError = error instanceof Error ? error.message : 'Could not restore from cloud backup';
@@ -218,11 +220,16 @@
 						<input bind:value={restoreRecoveryKey} placeholder="Paste the key you saved" required />
 					</label>
 
+					<label class="checkbox-row">
+						<input bind:checked={restoreConfirmed} type="checkbox" required />
+						<span>I understand this replaces everything on this computer</span>
+					</label>
+
 					{#if restoreError}
 						<p class="error-banner">{restoreError}</p>
 					{/if}
 
-					<button type="submit" disabled={restoreBusy}>{restoreBusy ? 'Restoring...' : 'Restore vault'}</button>
+					<button type="submit" disabled={restoreBusy || !restoreConfirmed}>{restoreBusy ? 'Restoring...' : 'Restore vault'}</button>
 				</form>
 
 				<button type="button" class="linkish" on:click={() => (mode = 'login')}>Back to sign in</button>

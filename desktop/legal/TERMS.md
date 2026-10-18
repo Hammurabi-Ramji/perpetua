@@ -27,6 +27,10 @@ Perpetua on devices you control for managing your own software licenses.
   subscribed. It does not mean lifetime support.
 - Future “Auto-Maintain” automation is **not** included unless
   explicitly sold and enabled.
+- Refunds: we will refund Pro in full within 30 days of purchase on request,
+  through the Polar customer-portal link in your purchase email or, if that
+  does not work, by emailing hcc@hammurabicodingcompany.com with the order
+  reference.
 
 ## 4. Your responsibilities
 

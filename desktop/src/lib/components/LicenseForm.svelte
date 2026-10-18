@@ -207,6 +207,7 @@
 				bind:value={model.keepalive_days}
 				type="number"
 				min="1"
+				max="3650"
 				placeholder="e.g. 90"
 				on:input={onKeepaliveInput}
 			/>

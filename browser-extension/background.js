@@ -30,31 +30,30 @@ async function maybeNotify(message, type = 'success') {
   });
 }
 
+// Server requires YYYY-MM-DD for purchase_date; null when unparseable.
+function toDateOnly(value) {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:$|[T ])/.exec(text);
+  let y, mo, d;
+  if (m) {
+    y = +m[1]; mo = +m[2]; d = +m[3];
+  } else {
+    const dt = new Date(text);
+    if (Number.isNaN(dt.getTime())) return null;
+    y = dt.getFullYear(); mo = dt.getMonth() + 1; d = dt.getDate();
+  }
+  const check = new Date(Date.UTC(y, mo - 1, d));
+  if (y < 1000 || check.getUTCFullYear() !== y || check.getUTCMonth() !== mo - 1 || check.getUTCDate() !== d) return null;
+  return `${String(y).padStart(4, '0')}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+
 // Normalizes a scraped license (which may come in with camelCase fields from
 // older content-script code paths) into Perpetua's LicensePayload shape, and
 // drops anything missing the two required fields — sending even one such row
 // to /api/vault/import would fail the *entire* batch, since it's parsed and
 // validated as one JSON document server-side, not row by row.
-// Perpetua stores dates as YYYY-MM-DD. Content scripts may hand over an
-// ISO timestamp (older code paths used `toISOString()`), a bare date, or
-// something unparseable; anything that doesn't reduce to a calendar date is
-// dropped rather than risk failing the whole import batch.
-function normalizeDate(value) {
-  if (value == null) return null;
-  const text = String(value).trim();
-  if (!text) return null;
-  const match = /^(\d{4}-\d{2}-\d{2})(?:[T ]|$)/.exec(text);
-  if (match) return match[1];
-  const parsed = new Date(text);
-  if (Number.isNaN(parsed.getTime())) return null;
-  // Local calendar date, not UTC — a purchase on the evening of the 3rd
-  // should not become the 4th because the user is west of Greenwich.
-  const year = parsed.getFullYear();
-  const month = String(parsed.getMonth() + 1).padStart(2, '0');
-  const day = String(parsed.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
 function normalizeLicense(raw, site) {
   const license_key = (raw.license_key ?? raw.licenseKey ?? '').trim();
   const product_name = (raw.product_name ?? raw.productName ?? '').trim();
@@ -63,7 +62,7 @@ function normalizeLicense(raw, site) {
   return {
     product_name,
     license_key,
-    purchase_date: normalizeDate(raw.purchase_date ?? raw.purchaseDate),
+    purchase_date: toDateOnly(raw.purchase_date ?? raw.purchaseDate),
     status: raw.status ?? 'active',
     source_site: site,
     product_url: raw.product_url ?? null,

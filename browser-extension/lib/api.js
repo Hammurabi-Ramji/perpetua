@@ -4,9 +4,28 @@
 
 const DEFAULT_API_BASE = 'http://127.0.0.1:18765';
 
+// Only loopback http origins (http://127.0.0.1:<port> or http://localhost:<port>)
+// may receive the bearer token. Returns the normalised origin, or null.
+// Keep in sync with normalizeLoopbackApiBase in options/options.js.
+function normalizeLoopbackApiBase(value) {
+  if (typeof value !== 'string') return null;
+  let url;
+  try {
+    url = new URL(value.trim());
+  } catch (_) {
+    return null;
+  }
+  if (url.protocol !== 'http:') return null;
+  if (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost') return null;
+  if (!url.port) return null;
+  if (url.username || url.password) return null;
+  if (url.pathname !== '/' || url.search || url.hash) return null;
+  return url.origin;
+}
+
 async function getConfig() {
   const { apiBase, apiToken } = await chrome.storage.local.get(['apiBase', 'apiToken']);
-  return { apiBase: apiBase || DEFAULT_API_BASE, apiToken };
+  return { apiBase: normalizeLoopbackApiBase(apiBase) || DEFAULT_API_BASE, apiToken };
 }
 
 async function authenticatedFetch(endpoint, options = {}) {
@@ -55,6 +74,6 @@ async function getLicenses() {
 }
 
 async function checkHealth(apiBase) {
-  const response = await fetch(`${apiBase || DEFAULT_API_BASE}/api/health`);
+  const response = await fetch(`${normalizeLoopbackApiBase(apiBase) || DEFAULT_API_BASE}/api/health`);
   return response.ok;
 }

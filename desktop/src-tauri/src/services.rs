@@ -1149,6 +1149,18 @@ pub fn update_account_recovery_settings(
     get_account_recovery_settings(conn, user_id)
 }
 
+/// Loads the SMTP settings and backup email for a test-send. Errors (as text
+/// shown to the user) if no backup email is set.
+pub fn prepare_test_email(conn: &Connection, user_id: i64) -> Result<(AccountRecoverySettings, String)> {
+    let settings = get_account_recovery_settings(conn, user_id)?;
+    let to = settings
+        .backup_email
+        .clone()
+        .filter(|v| !v.trim().is_empty())
+        .ok_or_else(|| anyhow!("Set a backup email first."))?;
+    Ok((settings, to))
+}
+
 /// One-time codes (password reset, share invites) are 8 characters from an
 /// alphabet without look-alikes (no 0/O, 1/I/L) — about 2^40 possibilities
 /// versus 10^6 for the old six digits, which the 10-requests/minute limiter

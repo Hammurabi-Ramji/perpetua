@@ -1,6 +1,6 @@
 # Perpetua — Lifetime License Manager
 
-Local-first **desktop** vault for lifetime software licenses: keep-alive reminders, vault export/backup, and Pro unlock (Polar or offline keys).
+Local-first **desktop** vault for lifetime software licenses: keep-alive reminders, vault export/backup, and Pro unlock ($49.99 one-time, activated through Polar).
 
 Built with **Tauri 2 + SvelteKit (Svelte 4) + Rust/Axum + SQLite**.
 

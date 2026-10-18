@@ -25,7 +25,7 @@ use crate::services::{
     get_license_stats, get_licenses, get_reminder_items, get_reminder_settings, get_user_by_email,
     get_user_by_id, import_licenses_csv, import_licenses_json, list_backups, list_site_connections,
     list_vault_members, mark_license_active, mark_onboarding_complete, mark_pro_activated,
-    prepare_cloud_sync, prepare_invite, prepare_password_reset, record_cloud_sync_result,
+    prepare_cloud_sync, prepare_invite, prepare_password_reset, prepare_test_email, record_cloud_sync_result,
     redeem_invite, resolve_data_owner_id, restore_vault_from_bytes, update_account_recovery_settings,
     update_license, update_reminder_settings, validate_credentials, vault_has_users, verify_jwt,
     FreeLimitReached,
@@ -526,10 +526,16 @@ async fn update_recovery_route(
     }
 }
 
+async fn vault_status_route(State((db, _)): State<(DbState, Arc<String>)>) -> Response {
+    let conn = db.lock().await;
+    match vault_has_users(&conn) {
+        Ok(has_users) => success(VaultStatus { has_users }),
+        Err(_) => failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to inspect vault"),
+    }
+}
+
 /// Sends a short test message to the backup email through the configured
-/// relay and reports the real error if it fails — the only way a user can
-/// find out their SMTP settings work *before* they are locked out and need
-/// the reset code to arrive.
+/// relay and reports the real error if it fails.
 async fn test_recovery_email_route(
     State((db, jwt_secret)): State<(DbState, Arc<String>)>,
     headers: HeaderMap,
@@ -539,35 +545,25 @@ async fn test_recovery_email_route(
         Err(error) => return error,
     };
 
-    let settings = {
+    let prepared = {
         let conn = db.lock().await;
-        match get_account_recovery_settings(&conn, user.id) {
-            Ok(settings) => settings,
-            Err(_) => return failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to fetch recovery settings"),
-        }
+        prepare_test_email(&conn, user.id)
     };
-    let Some(to) = settings.backup_email.clone().filter(|value| !value.trim().is_empty()) else {
-        return failure(StatusCode::BAD_REQUEST, "Set a backup email first, then save, then send a test.");
+    let (mail_settings, to) = match prepared {
+        Ok(prepared) => prepared,
+        Err(error) => return failure(StatusCode::BAD_REQUEST, &error.to_string()),
     };
 
     match crate::mail::send_email(
-        &settings,
+        &mail_settings,
         &to,
         "Perpetua test email",
-        "This is a test message from Perpetua. If you're reading it, your SMTP relay and backup email are set up correctly, and password-reset codes will reach you here.",
+        "This is a test email from Perpetua. Your SMTP relay is working.",
     )
     .await
     {
         Ok(_) => success(json!({ "sent": true, "to": to })),
-        Err(error) => failure(StatusCode::BAD_GATEWAY, &error.to_string()),
-    }
-}
-
-async fn vault_status_route(State((db, _)): State<(DbState, Arc<String>)>) -> Response {
-    let conn = db.lock().await;
-    match vault_has_users(&conn) {
-        Ok(has_users) => success(VaultStatus { has_users }),
-        Err(_) => failure(StatusCode::INTERNAL_SERVER_ERROR, "Failed to inspect vault"),
+        Err(error) => failure(StatusCode::BAD_REQUEST, &error.to_string()),
     }
 }
 
