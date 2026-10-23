@@ -15,7 +15,7 @@
     "mock-polar": "node dryrun/mock-polar.ts"
   },
   "dependencies": {
-    "@polar-sh/sdk": "1.0.0-alpha.20"
+    "@polar-sh/sdk": "1.0.2"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260903.1",
