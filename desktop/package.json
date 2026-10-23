@@ -29,7 +29,7 @@
     "@sveltejs/kit": "^3.0.1",
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@tauri-apps/cli": "^2.0.0-beta.0",
-    "@tauri-apps/plugin-shell": "^2.0.0-beta.0",
+    "@tauri-apps/plugin-shell": "^2.5.0",
     "@testing-library/svelte": "^5.2.8",
     "@typescript-eslint/eslint-plugin": "^8.71.1",
     "@typescript-eslint/parser": "^8.71.1",
